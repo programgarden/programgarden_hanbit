@@ -188,34 +188,43 @@ function CandleChart({ candles }: { candles: Candle[] }) {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    // Pull colors from the active theme tokens so the chart follows the theme.
+    const css = getComputedStyle(document.documentElement);
+    const tok = (name: string, fallback: string) =>
+      css.getPropertyValue(name).trim() || fallback;
+    const cMuted = tok("--muted", "#5f6b7a");
+    const cBorder = tok("--border", "#e2e5ea");
+    const cUp = tok("--up", "#16a34a");
+    const cDown = tok("--down", "#dc2626");
+    const cAccent = tok("--accent", "#2563eb");
     const chart = createChart(el, {
       width: el.clientWidth,
       height: 360,
       layout: {
         background: { color: "transparent" },
-        textColor: "#8b94a7",
+        textColor: cMuted,
         fontFamily: "var(--font-geist-mono), monospace",
       },
       grid: {
-        vertLines: { color: "#1a2030" },
-        horzLines: { color: "#1a2030" },
+        vertLines: { color: cBorder },
+        horzLines: { color: cBorder },
       },
-      rightPriceScale: { borderColor: "#232a3a" },
-      timeScale: { borderColor: "#232a3a" },
+      rightPriceScale: { borderColor: cBorder },
+      timeScale: { borderColor: cBorder },
       crosshair: { mode: 0 },
     });
     const candle = chart.addSeries(CandlestickSeries, {
-      upColor: "#22c55e",
-      downColor: "#ef4444",
-      borderUpColor: "#22c55e",
-      borderDownColor: "#ef4444",
-      wickUpColor: "#22c55e",
-      wickDownColor: "#ef4444",
+      upColor: cUp,
+      downColor: cDown,
+      borderUpColor: cUp,
+      borderDownColor: cDown,
+      wickUpColor: cUp,
+      wickDownColor: cDown,
     });
     const vol = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
       priceScaleId: "vol",
-      color: "#3b82f6",
+      color: cAccent,
     });
     chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
@@ -242,7 +251,7 @@ function CandleChart({ candles }: { candles: Candle[] }) {
       candles.map((c) => ({
         time: toTime(c.date),
         value: c.v,
-        color: c.c >= c.o ? "#22c55e55" : "#ef444455",
+        color: c.c >= c.o ? "#16a34a66" : "#dc262666",
       })),
     );
     chartRef.current?.timeScale().fitContent();

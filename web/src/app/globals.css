@@ -1,23 +1,23 @@
 @import "tailwindcss";
 
 /*
- * HANBIT — dark trading dashboard theme.
- * Tailwind v4 CSS-first config. Colors tuned for a low-glare, monospace-numeric
- * trading console. LIVE(real) = red accent, PAPER(sim) = amber accent.
+ * HANBIT — light trading dashboard theme.
+ * Tailwind v4 CSS-first config. Colors tuned for a clean, monospace-numeric
+ * trading console on white. LIVE(real) = red accent, PAPER(sim) = amber accent.
  */
 :root {
-  --background: #0b0e14;
-  --surface: #11151f;
-  --surface-2: #161b27;
-  --border: #232a3a;
-  --foreground: #d7dce5;
-  --muted: #8b94a7;
-  --accent: #3b82f6;
+  --background: #f7f8fa;
+  --surface: #ffffff;
+  --surface-2: #eef1f4;
+  --border: #e2e5ea;
+  --foreground: #14181f;
+  --muted: #5f6b7a;
+  --accent: #2563eb;
 
-  --live: #ef4444;
-  --paper: #f59e0b;
-  --up: #22c55e;
-  --down: #ef4444;
+  --live: #dc2626;
+  --paper: #d97706;
+  --up: #16a34a;
+  --down: #dc2626;
 }
 
 @theme inline {
