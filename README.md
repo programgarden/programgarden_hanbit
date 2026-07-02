@@ -5,6 +5,12 @@
 > 책의 실습·설명에 사용하기 위해 만들어졌습니다. 학습·참고용이며, 실제 투자 판단이나
 > 실거래에 그대로 사용하기 위한 것이 아닙니다.
 
+## 미리보기 (샘플)
+
+웹 대시보드 Overview 화면 — **교육용 데모 시드 데이터**로 렌더한 예시입니다.
+
+![HANBIT 대시보드 Overview — 샘플 데이터](docs/dashboard-overview.png)
+
 ## 구성
 
 - **`server/`** — Python / FastAPI 트레이딩 백엔드. 의존성 관리는 [uv](https://docs.astral.sh/uv/). 시세·체결을 WebSocket 으로 push.
