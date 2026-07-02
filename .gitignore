@@ -1,0 +1,46 @@
+# --- Python (server/) ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- Node / Next.js (web/) ---
+node_modules
+.next
+out
+build
+dist
+.turbo
+*.tsbuildinfo
+next-env.d.ts
+.pnpm-store/
+
+# --- local DB (SQLite/DuckDB) — 로컬 상태, 커밋 안 함 (시드 DB 는 필요시 git add -f) ---
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.duckdb
+*.duckdb.wal
+
+# --- env / secrets ---
+.env
+.env*.local
+sandbox/secret.env
+
+# --- Claude Code machine-local settings (deny+hook 는 settings.json 으로 추적) ---
+.claude/settings.local.json
+
+# --- misc ---
+.DS_Store
+*.pem
+*.sw[op]
+*~
+npm-debug.log*
+.pnpm-debug.log*
