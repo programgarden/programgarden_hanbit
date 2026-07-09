@@ -67,7 +67,7 @@ claude --dangerously-skip-permissions
 
 | 컨테이너 | 호스트 | 용도 |
 |---|---|---|
-| 3000 | http://localhost:13000 | Next.js 프런트엔드 (`web`) |
+| 3000 | http://localhost:8000 | Next.js 프런트엔드 (`web`) |
 | 8000 | http://localhost:18000 | FastAPI 백엔드 (`server`) |
 
 호스트 포트가 사용 중이면 다음 빈 포트로 자동 대체합니다(진입 로그 확인).

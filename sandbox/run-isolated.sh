@@ -171,21 +171,22 @@ if [[ -n "$RUNNING" ]]; then
 fi
 
 # Fresh container: publish the dev-server ports.
-#   host 13000 → container 3000 (web/Next.js)     host 18000 → container 8000 (api/FastAPI)
-# 컨테이너 내부 포트는 3000/8000 유지; 호스트 노출만 13000/18000 으로 고정(호스트 3000~3001 대역 충돌 회피).
+#   host 8000 → container 3000 (web/Next.js)      host 18000 → container 8000 (api/FastAPI)
+# 컨테이너 내부 포트는 3000/8000 유지; 호스트 노출만 web=8000/api=18000 으로 고정(호스트 3000~3001 대역 충돌 회피).
+# 주의: 컨테이너 내부 8000=api 이지만 호스트 8000=web 이라 번호 의미가 다르다(호스트 8000 → 컨테이너 3000).
 # 해당 호스트 포트가 사용 중이면 다음 빈 포트로 폴백(web)하거나 매핑을 건너뛴다.
 PORT_ARGS=()
-if port_in_use 13000; then
-  ALT="$(find_free_port 13001 13010 || true)"
+if port_in_use 8000; then
+  ALT="$(find_free_port 8001 8010 || true)"
   if [[ -n "$ALT" ]]; then
-    echo "[sandbox] port 13000 busy → web (Next.js) mapped to http://localhost:$ALT (host) → 3000 (container)."
+    echo "[sandbox] port 8000 busy → web (Next.js) mapped to http://localhost:$ALT (host) → 3000 (container)."
     PORT_ARGS=( -p "$ALT:3000" )
   else
-    echo "[sandbox] ports 13000-13010 all busy → web NOT mapped (container frontend unreachable from host)."
+    echo "[sandbox] ports 8000-8010 all busy → web NOT mapped (container frontend unreachable from host)."
   fi
 else
-  echo "[sandbox] web (Next.js) → http://localhost:13000 (host) → 3000 (container)."
-  PORT_ARGS=( -p 13000:3000 )
+  echo "[sandbox] web (Next.js) → http://localhost:8000 (host) → 3000 (container)."
+  PORT_ARGS=( -p 8000:3000 )
 fi
 if port_in_use 18000; then
   ALT="$(find_free_port 18001 18010 || true)"

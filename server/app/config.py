@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     hanbit_db_path: str = Field(default="./hanbit.db", alias="HANBIT_DB_PATH")
     hanbit_log_level: str = Field(default="INFO", alias="HANBIT_LOG_LEVEL")
     hanbit_cors_origins: str = Field(
-        default="http://localhost:13000,http://localhost:3000",
+        default="http://localhost:8000,http://localhost:13000,http://localhost:3000",
         alias="HANBIT_CORS_ORIGINS",
     )
 
