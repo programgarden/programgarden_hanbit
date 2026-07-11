@@ -4,9 +4,10 @@
 > 계획·설계 문서는 모두 **이 디렉터리 `.claude/plans/`** 에 있다(2026-06-20 `docs/` 에서 이전 + 3개 계획서를 `2026-06-20-통합계획서.md` 하나로 병합). 필요한 Part/섹션만 읽으세요(전체 X).
 > (메모리 스토어가 이 환경에서 깨져 있어 — bind-mount 이슈 — repo 노트로 핸드오프합니다.)
 
-**마지막 업데이트: 2026-06-21 (① UI 마무리 Wave 1 완료 — 명명갭 3/4 마감+시세없음 버그, 191 passed·tsc/eslint clean, 커밋 `fa06753`. ② 교재 작성은 이 예제 repo 와 분리된 별도 비공개 저장소에서 진행. hanbit-side 남은 건 UI Wave 2~4[`2026-06-21-UI-마무리-작업목록.md`])**
+**마지막 업데이트: 2026-07-09 (① 샌드박스 web 호스트 포트 13000→8000 전환, 커밋 `4247ba7`, 브랜치 `chore/sandbox-web-port-8000`. ② 개발서버 기동 → 사이트 라이브 확인. ③ **미해결 버그 1개: `/charts` 런타임 에러(캔들 시간 내림차순)** — 아래 '다음' 1순위.)**
 
 ## 완료된 것
+- **샌드박스 web 호스트 포트 13000 → 8000 전환 + 사이트 라이브 확인(2026-07-09, 커밋 `4247ba7`, 브랜치 `chore/sandbox-web-port-8000`)**. 사용자 요청("사이트를 localhost:8000 으로"). 호스트 8000 이 비어 있음을 실측 확인(리스닝 0·curl 거부) 후 전환 결정. **변경 5파일**: `sandbox/run-isolated.sh`(web publish `-p 8000:3000`, 폴백범위 `8001-8010`; **api 는 `18000:8000` 유지**) · `CLAUDE.md`·`sandbox/README.md`(새 매핑 + "컨테이너 안 `8000`=api / 호스트 `8000`=web" 번호 의미 충돌 주의 명시) · `server/.env.example`+`server/app/config.py`(CORS 허용목록에 `http://localhost:8000` 추가, 기존 13000/3000 유지 — web 이 same-origin 프록시라 실제론 안 걸리지만 방어적). `bash -n` 통과. **⚠ 포트 매핑은 컨테이너 생성 시점에 고정** → 현 컨테이너(`c7795347f455`, 수정 전 생성)는 여전히 `13000→3000`. **다음 컨테이너 재생성부터 8000 적용**(별도 작업 불필요). **재생성을 지금 안 한 이유**: 컨테이너의 메인 프로세스가 팀원 e1 의 claude 세션이라 `docker rm -f` 하면 e1 이 죽는다(사용자가 "일단 13000 에서 확인" 선택). **사이트 라이브 검증(호스트 실측)**: `localhost:13000` 200 · `localhost:13000/charts` 200 · `localhost:18000` 404(루트 라우트 없음 — 정상). **⚠ 세션 교훈**: 사이트가 안 뜬 원인은 포트가 아니라 **개발서버가 한 번도 안 떠 있었던 것**(포트 전환을 위해 기동을 보류시켰다가 재개를 잊음). 포트 의심 전에 `curl` 로 리스너 유무부터 확인할 것.
 - **UI 마무리 Wave 1 완료(2026-06-21, 커밋 `fa06753`) — 명명 미구현 잔여 3/4 마감 + 고가치 버그**. 화면별 적대적 분석(워크플로우 8에이전트: 6화면+공통셸/모달+명명갭/백엔드) → 우선순위 도출 → Wave 1 구현. **① 서버시계**: `ServerClock` 이 `new Date()` 로컬 → `/system/clock` 서버 권위시각+skew 보정(세션은 M0 스텁이라 '세션 미상' 정직표기). **② HKEX 화이트리스트 검증**: 신규 `GET /orders/whitelist`(게이트 강제 화이트리스트 노출, multiplier=meta_json 파싱) → 모달 심볼 자유텍스트→검증 select(47종목)+빈심볼/수량≤0/가격≤0 차단. **③ Orders 페이지네이션**: history 80고정→"더 보기(+50)"(서버 limit/offset, limit 을 쿼리키에 포함)+필터0건/데이터0건 구분 "필터 초기화" CTA. **🐛 Positions 시세없음**: `current_price=null` 행이 합계 조용히 0 왜곡→'시세 없음'+합계 제외+⚠. **남은 명명갭=④ Charts SL/TP 오버레이뿐→M4 보류가 맞음**. **변경 9파일**(server `app/api/orders.py` + web `ServerClock`·`OrderTicketModal`·`orders/page`·`PositionsView`·`lib/api/{types,endpoints}`·`lib/query/{keys,hooks}`). **검증**: `ruff` clean·`tsc` clean·`eslint --max-warnings 0` clean·서버 **191 passed**·새 엔드포인트 200(프록시)·6라우트 200·백엔드 재시작(새 라우트 라이브). **상세 작업목록·화면별 현재상태·남은 Wave 2~4 = `.claude/plans/2026-06-21-UI-마무리-작업목록.md`**(교재 챕터 기준).
 - **Overview 등 HTTP 404 근본해결 — same-origin API 프록시 전환(2026-06-20, 커밋 `993faec`)**. **근본원인(앞 세션 진단보다 한 겹 깊음)**: 컨테이너 안 curl 은 모든 M3 엔드포인트 200 인데 **호스트 브라우저의 `localhost:8000` 이 이 컨테이너 M3 서버가 아님** → 404. 이유=호스트 8000 포트가 다른 컨테이너/프로젝트에 점유돼 이 컨테이너 :8000 은 다른 호스트 포트로 매핑(web 이 3003 폴백한 것과 동일 현상) **또는 Tailscale 원격**(`next.config` `allowedDevOrigins` 단서 — 그 경우 브라우저의 localhost 는 사용자 기기). 앞 세션의 '서버 좀비 교체로 해결' 은 컨테이너 내부만 보고 한 오판이었음. **해결=`localhost:8000` 가정을 코드에서 제거하고 same-origin 프록시로 전환**(브라우저는 이미 잘 닿는 web origin 으로만 API/WS 호출 → web 서버가 같은 컨테이너 :8000 으로 프록시 → 호스트 포트/원격 무관, 컨테이너 안에서 완전 검증 가능). **변경 4파일**: `web/next.config.ts`(`rewrites()` `/api/v1/:path*`→`${BACKEND_ORIGIN:-http://localhost:8000}`; WS 업그레이드도 Next16 Turbopack 이 프록시함 — 실측) · `web/src/lib/api/client.ts`(브라우저 베이스 상대 `/api/v1`, `wsUrl()` 페이지 origin 에서 `ws(s)://` 절대유도, `restBase()` SSR 안전 폴백=서버측 컨테이너 내부 절대주소) · `web/src/lib/modes.ts`(TopBar=서버컴포넌트 SSR 이라 `BACKEND_ORIGIN` 내부 절대주소) · `web/src/app/page.tsx`(**`anyError` 전체화면 조기 return 제거→KPI/통화카드/손익 섹션별 로딩·에러 격하**; 단일 엔드포인트 실패가 화면 전체를 안 막음. 나머지 5화면은 이미 섹션별 처리라 무변). **코드 기본값도 same-origin 으로 고쳐 gitignore 된 `web/.env.local` 없이도 동작**(단 `.env.local` 도 `/api/v1`+`BACKEND_ORIGIN` 로 갱신함). **검증(컨테이너 내, 브라우저와 동일 경로 web:3000 경유)**: HTTP 6엔드포인트(health/halt_state/portfolio/positions/accounts/orders) 200+`ok:true` · WS `ws://:3000/api/v1/stream` open+info(M3)+ping/pong · SSR `fetchModes` 라이브(백엔드 로그 `/system/modes` 200·폴백 아님) · 6라우트 200·에러마커 0 · `tsc --noEmit` clean · `eslint . --max-warnings 0` clean. **dev 서버는 새 config/env 로 재기동함**(컨테이너 :3000). **✅ 호스트 실브라우저 육안확인 완료(2026-06-20, 사용자 "잘 뜬다")**: 하드리프레시(Cmd+Shift+R) 후 6화면 데이터 정상 렌더 — 404 근본해결 최종 확정. (커밋 직전 재현검증도 green: web:3000 프록시 6엔드포인트 200·6라우트 200·WS open+info(M3)+ping/pong.) **⚠ `next build` 미실행**(구동 중 dev 서버의 `.next` 충돌 회피; tsc+dev 컴파일로 대체).
 - **web 대시보드 UI 실연결 완성(2026-06-20, 커밋 `af63a88`) — 사용자 지시 "우선 ui부터 완성"(교육용 예제→교재화 예정)**. 충실도 결정=**실연결+샘플 시드+'M4 예정' 배지**(목데이터 X·교육 정직성). **신규 토대**: `web/src/lib/api/`(엔벨로프 `{ok,data,error}` 클라이언트+`ApiError`+DTO 타입+엔드포인트 함수)·`lib/query/`(React Query 훅 reads+mutations+`Providers` layout 배선)·`lib/ws/`(단일 WS 클라이언트 `/api/v1/stream` 재연결·seq갭 재동기화+Zustand `useStream` 스토어)·`lib/order-ticket/`+`OrderTicketModal`(화면공용 quote→commit/정정/취소, FUT paper 실동작·KR/OVS 403→'M4' 안내)·`lib/format.ts`+ui 보강(Loading/Error/Empty/**DeferredBadge**). **화면 6개 실연결**: Overview(`/portfolio`·`/accounts`·`/halt_state`·`/orders/open`, 통화격리 카드·live/paper 분리손익·₩환산 ★별도★)·Positions(`/portfolio/positions?bucket=`, 탭=버킷, 청산→모달, 행클릭→Charts)·Orders(`/orders/open|history`+WS orders/fill, 필터·신/정/취·reconcile, 심볼은 positions로 해석[orders 테이블 symbol 컬럼 없음])·Charts(`/market/ohlcv`+`/market/quote`, **lightweight-charts v5 실캔들**)·Risk(`/risk/limits|events|halt_state`+WS, 킬스위치 L1/L2 2단계 실동작; 한도저장=쓰기 endpoint 없음→읽기전용+M4)·Strategies(백엔드 스텁→정직한 M4 프리뷰). TopBar WS상태/엔진상태 실연결·KILL 버튼→/risk. **시드**: `server/scripts/seed_demo.py`(멱등, positions5/orders6/fills3/risk_events6/bucket_kpi/balances). **검증**: `next build`·`tsc`·`eslint --max-warnings 0` clean / M3 API 모든 UI 엔드포인트 시드데이터 반환 / 시세 라이브(주말 일봉 OHLCV 정상) / **WS OK**(info milestone M3·5토픽·ping→pong) / 6라우트 HTTP200+현재코드+런타임에러0 / CORS(:3000,:13000) 허용. **스크린샷 미수행**(컨테이너에 헤드리스 브라우저 없음 — Playwright chromium 시스템 라이브러리 부족). **알려진 정직한 동작**: 열린주문 빈 것=부팅 reconcile 이 브로커에 없는 시드주문 정리(reconcile 권위)·FUT 새주문은 게이트 REJECT(`per_order_cap_krw=3M`<1계약~1억 명목, e2e 막은 그 캡).
@@ -29,12 +30,13 @@
 - **콘텍스트 자동 recycle 이식 완료(2026-06-19, 호스트 핸드오프, 커밋 `a86b979`)**: server 의 메커니즘(=모델 self-clear 아님, watcher 가 `cmux send` 로 `/clear → /catch` 키 주입하는 **외부 오케스트레이션**) 이식 + 독립 세션 정적 검증 통과(`bash -n` OK·`ctl.sh status` req-reset 표시). `ctl.sh recycle[-host]`/`baton-reset` + `watch.sh` `csend()`/`recycle()`/`req-reset` + `config.sh` recycle 변수 + `/recycle`(자동판) + 신규 `/catch`(STATUS.md SSOT 기반 연속, 블로커 우회 금지). **watcher 는 새 코드로 재시작 완료 — 추가 재시작 불필요**(이후 `watch.sh`/`config.sh` 수정 시에만 호스트 `/relay-watcher-restart` 1회). 사용법: 컨텍스트 차거나 작업단위 종료 + 다음작업 있을 때 `/recycle "<다음 작업 한 줄>"`. 상세는 프로젝트 `CLAUDE.md` '팀 협업' 절. **(2026-06-22 org host 전환 — relay 폐기, `/recycle`=`pgtui recycle --self`.)**
 
 ## 재개 방법
-- **⚠ GitHub push 미완(2026-06-21, 사용자 지시로 보류)**: git **remote 아직 없음**, 샌드박스 `gh` 미인증. 호스트 핸드오프했으나 사용자가 "push 는 다음에" 로 보류 → GitHub 에 닿은 작업 0. push 재개 시 호스트로 핸드오프(호스트에 GitHub 인증)하거나 샌드박스에서 `gh auth login` 후 `git remote add origin <URL>` + `git push -u origin feat/m0-m1-scaffold`. 현재 브랜치에 미push 커밋: `96b1c17`(STATUS)·`993faec`(404 fix) 등.
+- **git remote(2026-07-09 실측 정정 — 예전 "remote 없음/main unborn" 기술은 낡음)**: `origin = https://github.com/programgarden/programgarden_hanbit.git` (**공개 repo**). `main` 에 커밋 있음(`f27d712` 등). **커밋 신원은 반드시 `programgarden <programgarden@users.noreply.github.com>`** — 이 repo 의 기존 커밋 전부 이 신원이고, 로컬 `git config user.email` 기본값은 **개인 Gmail 이라 공개 repo 에 새면 안 된다**. repo-local 로 고정해 둠(`git config user.email` 확인). **push 는 사용자가 명시할 때만.**
 - 서버 기동: `cd /workspace/server && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000`
-- 웹 기동:   `cd /workspace/web && pnpm dev`
-- **현재 컨테이너 호스트 접속**: web → **http://localhost:3003** · api → http://localhost:8000
-  (생성 당시 호스트 3000~3002가 점유돼 web이 3003으로 자동 폴백. 정확한 포트는 호스트에서 `docker ps` 의 `->3000/tcp` 로 확인.)
-- **전용 포트(13000/18000) 고정 원하면**: 호스트에서 `docker rm -f <hanbit 컨테이너> && ./sandbox/run-isolated.sh` 로 재생성 → `run-isolated.sh` 가 13000(web)/18000(api) publish(설정 커밋됨) → http://localhost:13000. (재생성 시 컨테이너 내부 세션 종료됨 — 작업은 커밋돼 있어 복구 가능.)
+- 웹 기동:   `cd /workspace/web && pnpm dev -- -H 0.0.0.0 -p 3000`
+  - ⚠ 둘 다 **`0.0.0.0` 바인딩 필수**. `127.0.0.1` 이면 도커 포트포워딩이 안 뚫려 호스트에서 연결 거부된다.
+- **호스트 접속(2026-07-09 현재 컨테이너 `c7795347f455`)**: web → **http://localhost:13000** · api → http://localhost:18000
+  - 정확한 포트는 호스트에서 `docker ps --filter ancestor=hanbit-sandbox:latest` 의 `->3000/tcp` / `->8000/tcp` 로 확인.
+- **8000 으로 web 보려면(설정은 이미 커밋됨 `4247ba7`)**: 호스트에서 `docker rm -f <hanbit 컨테이너> && ./sandbox/run-isolated.sh` 로 **재생성**하면 `run-isolated.sh` 가 `-p 8000:3000` publish → http://localhost:8000. **포트 매핑은 컨테이너 생성 시점 고정이라 재생성 외엔 방법 없다.** ⚠ 재생성하면 **컨테이너 안 팀원(e1) claude 세션이 종료**된다(그게 컨테이너 메인 프로세스). `/workspace` 는 바인드마운트라 파일은 보존. ⚠ 임시로 호스트 8000 을 socat 등으로 점유하지 말 것 — 다음 재생성 때 `port_in_use 8000` 폴백이 걸려 8001 로 밀린다.
 - **키**: `server/.env`(gitignore, 추적 안 됨)에 LS증권 API 키를 설정한다(`server/.env.example` 참조). `HANBIT_ALLOW_LIVE=false`(실거래 주문 M4까지 차단). 키는 절대 출력/커밋 금지.
 
 ## M2 구현 메모 (코드 완료)
@@ -51,19 +53,59 @@
 - ⛔ **블로커(사용자 액션 필요 — 코드/키로 못 풂)**: 주문 발사(`CIDBT00100`)만 `rsp_cd='01491' "모의투자 주문이 불가한 계좌입니다"`. **`server/.env` 의 `APPKEY_FUTURE` 와 루트 `/workspace/.env` 의 `APPKEY_FUTURE_FAKE` 둘 다 동일 에러.** 로그인·시세·계좌조회는 정상이고 **주문권한만** 없음 → **LS 계좌의 해외선물 "모의투자 주문권한" 신청/활성화 필요**(또는 주문 가능한 모의 키 제공). 활성화 후 `server/tests/`(또는 보관된 e2e 스크립트)로 신/정/취 1회 즉시 통과(코드 변경 0).
 - ✅ **확정된 사실(라이브 실측)**: o3101 `gubun="1"`·`ExchCd=="HKEX"`(47종목)·`CtrtPrAmt`=승수 / 계좌번호 **자동주입 동작**(조회·주문 모두 계좌 식별됨) / 성공 `rsp_cd='00000'`·계좌불가 `'01491'` / 계좌 TR **호출건수 제한**(HTTP500 "호출 거래건수를 초과") 있어 연속호출 간 간격 필요(공유 rate_limit_key 미사용 → M3 에서 버킷 직렬 큐).
 
+## M4 결정사항 (2026-07-10, 사용자 확정) — M4 작업 전 필독
+
+> **M4 = 국내주식·해외주식 실거래 주문경로**(INV-1 첫 해제). **해외선물은 M4 이후에도 계속 모의(paper)·HKEX 전용이며 실거래 대상이 아니다**(버킷 `overseas_futureoption` = paper 고정, 게이트가 HKEX 화이트리스트 47종목 강제 — 2026-07-10 사용자 확인). 따라서 M4 가 필요로 하는 실계좌 캡은 **국내 KRW · 해외 USD 둘뿐**이다.
+
+**범위 승인**: 사용자가 "M4f 까지" 선택. ⚠ 이는 **범위(scope) 승인이며 실발사 승인이 아니다.** 계획서 §0.4 ④ / §13("M4f 만 운영자 명시 동의 하에 실거래") 대로, **실제 첫 주문 직전에 별도 명시 승인 + 사용자가 직접 `allow_live=true` 설정**. M4a~M4e 는 `allow_live=false` 로 닫힌 채 코드만 적재 → **실주문 0**.
+
+**[R] 확정분**
+
+| 항목 | 확정값 |
+|---|---|
+| 집중도 캡 (LIVE) | 단일종목 **0.4** / 단일시장 **0.7** |
+| 일일 손실 한도 (LIVE) | **per-order 캡 × 3** |
+| L2 청산 주문방식 | **시장가 즉시 청산** (위험 고지 2회 후 사용자 재확인) |
+
+**[R] 미확정 — 현재 블로커**
+- **국내 per-order 캡(KRW) · 해외 per-order 캡(USD)**: 사용자 지시 = "실계좌 잔고 범위 안에서". **2026-07-10 e1 에게 읽기전용 실계좌 조회 인계 — 결과 대기 중**(`read_messages` 로 확인). ⚠ **`GET /api/v1/accounts` 값은 전부 `seed_demo.py` 가 심은 데모다**(KRW 예수금 53,000,000 / 주문가능 21,400,000, USD 8,500 / 3,120, `updated_at` 2026-07-02 고정, 계좌명 `DEMO-*`). **이 숫자로 실제 돈의 캡을 정하면 안 된다.** 실잔고를 DB 로 밀어넣는 `balances_snapshot` 라이브 push 배선은 M4d 연기분이라 아직 경로 자체가 없다.
+- **`daily_notional_cap` 절대값**(§6 step4'' 누적 명목 캡) — per-order 캡 확정 후 산정.
+
+**⚠ L2 시장가 청산 — 위험 고지 + 필수 완화(구현 시 반드시 반영)**
+사용자에게 두 번 고지했고 그래도 시장가를 택했다. 위험은 두 겹이다.
+1. 계획서 §9 는 KR/OVS 시장가(`OrdprcPtnCode="03"`)의 **수용 여부를 `[L]`(라이브에서만 확인 가능)** 로 남겨뒀다 — 즉 **미검증 경로**.
+2. §6 step4' 의 `NO_NOTIONAL_FOR_LIVE` 가드는 명목 산정이 안 되는 LIVE 주문을 **하드 REJECT** 한다. 시장가는 정의상 가격이 없다. §9 도 "청산 명목도 step4' 통과(reduce-only 라도 명목 산정·기록)" 라고 못박았다.
+
+→ 그대로 두면 **킬스위치 L2 가 자기 가드에 막혀 포지션을 못 닫는다** — 안전장치가 정작 위기에 inert 되는 최악의 실패 모드다. **따라서 구현 시 반드시:**
+- (a) 청산 주문은 **현재가 스냅으로 명목을 강제 추정**해 step4' 를 통과시킨다.
+- (b) 브로커가 `03` 을 거부하면 **지정가+슬리피지로 자동 fallback** — 킬스위치가 절대 no-op 이 되지 않게.
+- (c) fallback 발동을 `risk_event` + 메트릭으로 남긴다.
+- (d) Gate B(§14)에서 `03` 수용 여부를 `[L]` 실측하고 **결과를 이 절에 박제**한다.
+
+**M4f 전 선행조건**: M3 연기분 라이브 push 배선 인수(M4d 소유 — `balances_snapshot`/일일손실, §6 step7 LIVE orderable 헤드룸의 선행조건). 아래 '다음' 7번 항목.
+
 ## 다음
+> **(2026-07-10 갱신) 우선순위 = ① `/charts` 정렬 버그(작음, 사이트 깨짐) → ② M4a 착수(승인됨, 실주문 0).** 그 다음이 기존 교재/UI Wave.
 > **현재 사용자 우선순위 = UI(사용자 지시 "우선 ui부터 완성하자"). 실거래(M4)는 평일에**(주말이라 보류). **이 프로젝트는 교육용 예제 → 작업 마무리되면 교재 작업 예정**(코드·화면이 읽기 쉽고 교육적이어야 함). 메모리 스토어 깨져 있어 STATUS 가 SSOT.
 > ✅ **(완료, 2026-06-20) HTTP 404 호스트 육안확인** + ✅ **(완료, 2026-06-21) UI 마무리 Wave 1**(명명갭 3/4 + 버그, 커밋 `fa06753`, 위 '완료된 것' 1번).
-1. **(1순위·사용자 지정) 교재 작성 — ⚠ 별도 비공개 repo 에서 진행**: 책은 이 예제 repo 와 분리된 별도 비공개 저장소에서 작성한다(예제 repo = 읽기전용 참조·시크릿 인용 금지). 구조=챕터1개=파일1개 + manifest SSOT 인덱스 + outline 골격 초안(검토 대기). **이 hanbit 세션에서는 책을 쓰지 않는다**(별도 세션). 교재가 인용할 UI 현재상태 = `2026-06-21-UI-마무리-작업목록.md` '화면별 현재상태'.
-2. **(2순위·사용자 지시 시) UI Wave 2~4** — `2026-06-21-UI-마무리-작업목록.md` 참조. Wave 2=교재화(화면 내 교육 설명+코드 주석, educational '고' 다수)·Wave 3=와이어프레임 복원(Overview 분배도넛·위험KPI, Strategies 3패널, Risk scope 그룹핑)·Wave 4=폴리시·버그. ④ Charts SL/TP 오버레이 등 `[M4]` 항목은 보류 유지.
+1. **(1순위·사용자 지정, 2026-07-09) `/charts` 런타임 에러 수정 — 캔들이 시간 내림차순이라 lightweight-charts 가 assert**. **증상**: 브라우저 `/charts` 에서 `Assertion failed: data must be asc ordered by time, index=1, time=1783468800, prev time=1783555200` @ `web/src/app/charts/ChartsView.tsx:247` 의 `candleRef.current.setData(...)` (`CandleChart.useEffect`). 두 값 차 = 86400초(일봉 1개)이고 **prev > current** → 데이터가 **최신순(desc)**. (`1783555200`=2026-07-09, `1783468800`=2026-07-08.) SSR 은 200 이고 클라이언트 렌더에서만 터진다.
+   - **근본원인(코드 확인 완료)**: **정렬이 어디에도 없다.** `server/app/api/market.py:39 market_ohlcv` → `server/app/services/market_service.py:41 get_ohlcv` 는 **단순 위임**이고, 어댑터 3개(`app/adapters/{korea_stock,overseas_stock,overseas_future}.py` 의 `get_ohlcv`)는 브로커 응답 순서(LS 일봉 = 최신순)를 그대로 반환. lightweight-charts `setData()` 는 **시간 오름차순 필수**.
+   - **다음 행동 1가지**: `server/app/services/market_service.py:41 get_ohlcv` 의 **반환 직전에 `date` 오름차순 정렬** — 어댑터 3개가 모두 지나는 **단일 초크포인트**라 한 곳만 고치면 전부 해결된다. 추가로 방어적으로 `web/src/app/charts/ChartsView.tsx:246` useEffect 안에서 `[...candles].sort((a,b)=>a.date.localeCompare(b.date))` 한 뒤 `setData` 에 넘긴다. (`Candle.date` 는 `YYYYMMDD` 고정폭 → 문자열 정렬 = 시간순. `models/dto.py:28` 이 "YYYYMMDD 등" 이라 하니 분봉 도입 시 폭 확인할 것.)
+   - **⚠ 함정**: `count` 는 "최신 N개"를 받는 의미다. **자른 뒤에 정렬**해야 최근 N개가 오름차순으로 남는다. 정렬 후 자르면 가장 **과거** N개가 남아 조용히 틀린 차트가 된다.
+   - **검증**: ① 컨테이너 안에서 `curl -s 'localhost:3000/api/v1/market/ohlcv?market=<m>&symbol=<s>&period=D&count=100'` → `data.candles` 의 첫 `date` < 끝 `date` ② 호스트 브라우저 `/charts` 런타임 에러 0(하드리프레시) ③ `pytest`(191 기준)·`tsc --noEmit`·`eslint . --max-warnings 0` clean.
+2. **(2순위·사용자 승인 2026-07-10) M4 착수 — 먼저 `M4a`**. 계획서 `.claude/plans/2026-06-20-M4-계획서.md` §13 슬라이스. **M4a = per-bucket EngineState 리팩터(§3) + config 토글(§2) + DTO 보강(§4.3) + `patch_adapter` allow_live 수용(§3.4)**. 주문경로 **무변**(paper 동작 보존, 실주문 0). **[R] 값과 무관하므로 지금 바로 착수 가능.** DoD = **191 회귀 green** + per-bucket 전이 테스트(live 부트실패 → live `READ_ONLY` ∧ paper `ACTIVE` 격리, §17 L3-11). **아래 '## M4 결정사항' 절을 반드시 먼저 읽을 것** — [R] 확정분·미확정분·안전 게이트가 거기 있다.
+   - ⚠ **M4b 부터는 per-order 캡([R]) 없이 못 쓴다.** 캡 확정 전까지는 M4a 만.
+   - ⚠ **M4f(실발사)는 별도 명시 승인 필요.** 사용자의 "M4f까지" 는 **범위 승인**이지 발사 승인이 아니다(계획서 §0.4 ④·§13: "M4f 만 운영자 명시 동의 하에 실거래").
+3. **(3순위·사용자 지정) 교재 작성 — ⚠ 별도 비공개 repo 에서 진행**: 책은 이 예제 repo 와 분리된 별도 비공개 저장소에서 작성한다(예제 repo = 읽기전용 참조·시크릿 인용 금지). 구조=챕터1개=파일1개 + manifest SSOT 인덱스 + outline 골격 초안(검토 대기). **이 hanbit 세션에서는 책을 쓰지 않는다**(별도 세션). 교재가 인용할 UI 현재상태 = `2026-06-21-UI-마무리-작업목록.md` '화면별 현재상태'.
+4. **(4순위·사용자 지시 시) UI Wave 2~4** — `2026-06-21-UI-마무리-작업목록.md` 참조. Wave 2=교재화(화면 내 교육 설명+코드 주석, educational '고' 다수)·Wave 3=와이어프레임 복원(Overview 분배도넛·위험KPI, Strategies 3패널, Risk scope 그룹핑)·Wave 4=폴리시·버그. ④ Charts SL/TP 오버레이 등 `[M4]` 항목은 보류 유지.
    - **✅ Wave 1 코드 커밋됨(`fa06753`, 9파일)**. push 는 remote 미설정으로 보류(STATUS '재개 방법' 의 GitHub push 보류 항목 참조).
    - **참고(정직한 동작, 버그 아님)**: 열린주문 빈 것=부팅 reconcile 정리 / FUT 새주문 게이트 REJECT=`per_order_cap_krw=3M`<1계약~1억(이건 §11[R]/M4 전 캡 재검토 대상, e2e 도 막은 캡).
-3. **(3순위·평일) 실전 라이브 테스트 — M2 해외선물 paper e2e**: `cd /workspace/server && PYTHONPATH=/workspace/server uv run python scripts/live_e2e_paper_fut.py` (신/정/취+reconcile). ⚠ 그냥 실행 시 `ModuleNotFoundError: app`(scripts 가 sys.path) → `PYTHONPATH=/workspace/server` 필요. **블로커 2개**: ① 주문권한 `01491`(LS 모의 주문권한 미활성, 사용자 액션) ② **게이트 `per_order_cap_krw=3M` 이 HBIM26 1계약(~1억 명목)을 먼저 REJECT** → 브로커 도달 못 함(가격 11000×50×180≈1.01억≫3M). 평일+권한 활성+캡 상향(또는 소액명목) 필요. 우회 금지.
+5. **(5순위·평일) 실전 라이브 테스트 — M2 해외선물 paper e2e**: `cd /workspace/server && PYTHONPATH=/workspace/server uv run python scripts/live_e2e_paper_fut.py` (신/정/취+reconcile). ⚠ 그냥 실행 시 `ModuleNotFoundError: app`(scripts 가 sys.path) → `PYTHONPATH=/workspace/server` 필요. **블로커 2개**: ① 주문권한 `01491`(LS 모의 주문권한 미활성, 사용자 액션) ② **게이트 `per_order_cap_krw=3M` 이 HBIM26 1계약(~1억 명목)을 먼저 REJECT** → 브로커 도달 못 함(가격 11000×50×180≈1.01억≫3M). 평일+권한 활성+캡 상향(또는 소액명목) 필요. 우회 금지.
    - **⚠ 블로커(사용자 액션 — 코드/키로 못 풂)**: 직전 라이브 실측에서 **주문 발사만** `rsp_cd='01491' "모의투자 주문이 불가한 계좌입니다"` — LS 해외선물 **모의투자 주문권한** 미활성. 로그인·시세·계좌조회(CIDBQ01500/02400)는 라이브 정상. **사용자가 주문권한을 활성화했으면 스크립트가 즉시 신/정/취 통과**(코드 변경 0). 아직이면 `01491` 재현 여부만 확인해 **"주문권한 여전히 미활성"** 한 줄 보고하고 멈춘다(블로커 우회 금지).
    - 사전 점검: `server/.env` 에 키 채워져 있음(추적 안 됨, 출력 금지). engine `PAPER_TRADING` 필요(스크립트가 설정하거나 `HANBIT_ENGINE_STATE=PAPER_TRADING`). HKEX o3101 마스터 적재 경로 포함. 계좌 TR 호출건수 제한 있어 연속호출 간격 주의(§8 tr_queue).
    - **M4 는 live 테스트 불가**: 설계+적대검증만 완료, 코드 미구현 → 실행 가능한 실전 테스트는 이 M2 paper FUT e2e 가 **유일**.
-4. **(4순위·M4·평일) M4a 구현 — 승인 대기**: `.claude/plans/2026-06-20-M4-계획서.md` 의 ④ 사용자 승인 + §11 [R] 값 확정(국내/해외 캡·집중도·청산 시장가) 후 §13 슬라이스 **M4a**(per-bucket EngineState 리팩터 + config 토글 + DTO + `patch_adapter` 갱신; **paper 동작 무변·[R] 무관 → 값 없이도 착수 가능**, **191 회귀 green** 목표). M4b~f(KR/OVS 어댑터·안전 UI·실시간·Gate B)는 [R] 필요. **⚠ 최고위험: M4 가 INV-1 첫 해제(실제 돈)** — HIGH 6 결함은 M4계획서 §0.2/§6/§7/§1.5 에 설계반영됨.
-5. **⚠ M4 진입 전 인수할 M3 연기분**(통합계획서 M3 §13 + M4계획서 §15): 라이브 push 배선(`main.py` lifespan account_tracker→aggregator→`DailyLossMonitor`→persist; **balances_snapshot/orderable 헤드룸 포함 — M4d 소유, LIVE 활성 선행조건**)·LIVE 2-tracker 머지·라이브 값 검증(FX·TC·호출건수·거래일경계·청산 시장가). 핵심 보정: 금액 `Decimal`/`REAL`·고정환율 1400/180 fallback·positions 권위=reconcile·API 는 DB 행 read-only(직접 계좌 TR 금지)·판정 단일권위 `app/risk/halt.py` `bucket_state`(킬스위치 trading_halt > 일일손실 risk_state).
+6. **(슬라이스 상세 — 2026-07-10 승인 완료, 착수는 위 2순위)** M4a 구현: `.claude/plans/2026-06-20-M4-계획서.md` 의 ④ 사용자 승인 + §11 [R] 값 확정(국내/해외 캡·집중도·청산 시장가) 후 §13 슬라이스 **M4a**(per-bucket EngineState 리팩터 + config 토글 + DTO + `patch_adapter` 갱신; **paper 동작 무변·[R] 무관 → 값 없이도 착수 가능**, **191 회귀 green** 목표). M4b~f(KR/OVS 어댑터·안전 UI·실시간·Gate B)는 [R] 필요. **⚠ 최고위험: M4 가 INV-1 첫 해제(실제 돈)** — HIGH 6 결함은 M4계획서 §0.2/§6/§7/§1.5 에 설계반영됨.
+7. **⚠ M4 진입 전 인수할 M3 연기분**(통합계획서 M3 §13 + M4계획서 §15): 라이브 push 배선(`main.py` lifespan account_tracker→aggregator→`DailyLossMonitor`→persist; **balances_snapshot/orderable 헤드룸 포함 — M4d 소유, LIVE 활성 선행조건**)·LIVE 2-tracker 머지·라이브 값 검증(FX·TC·호출건수·거래일경계·청산 시장가). 핵심 보정: 금액 `Decimal`/`REAL`·고정환율 1400/180 fallback·positions 권위=reconcile·API 는 DB 행 read-only(직접 계좌 TR 금지)·판정 단일권위 `app/risk/halt.py` `bucket_state`(킬스위치 trading_halt > 일일손실 risk_state).
 
 > 세션 리사이클: `/recycle` 명령 추가됨(`.claude/commands/recycle.md`) — 컨텍스트 30~50%/세션 종료 시 commit+STATUS 핸드오프 후 `/clear`. 라이브 e2e 재현 스크립트: `server/scripts/live_e2e_paper_fut.py`.
 
