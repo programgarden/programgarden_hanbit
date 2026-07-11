@@ -244,11 +244,16 @@ function CandleChart({ candles }: { candles: Candle[] }) {
   // Push data on every candle update.
   useEffect(() => {
     if (!candleRef.current || !volRef.current) return;
+    // 방어적 정렬: lightweight-charts setData()는 time 오름차순 필수.
+    // 서버가 이미 오름차순으로 주지만(market_service.get_ohlcv), 최신순 응답이
+    // 새어들어와도 assert 로 차트가 깨지지 않도록 여기서도 오름차순 보장.
+    // date=YYYYMMDD 고정폭 → localeCompare = 시간순.
+    const sorted = [...candles].sort((a, b) => a.date.localeCompare(b.date));
     candleRef.current.setData(
-      candles.map((c) => ({ time: toTime(c.date), open: c.o, high: c.h, low: c.l, close: c.c })),
+      sorted.map((c) => ({ time: toTime(c.date), open: c.o, high: c.h, low: c.l, close: c.c })),
     );
     volRef.current.setData(
-      candles.map((c) => ({
+      sorted.map((c) => ({
         time: toTime(c.date),
         value: c.v,
         color: c.c >= c.o ? "#16a34a66" : "#dc262666",
