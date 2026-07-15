@@ -7,10 +7,10 @@
  * positions (both buckets, grouped by currency here), /accounts (deposits),
  * /risk/halt_state, /orders/open. Currency figures are shown per-currency and
  * NEVER summed across markets; the ₩-converted grand total is a clearly-labelled
- * reference box only. Strategy count is M4 (backend stub).
+ * reference box only. Strategy count is wired to the M5 strategy engine (/strategy).
  */
 
-import { Card, DeferredBadge, ErrorState, Kpi, Loading, Pnl } from "@/components/ui";
+import { Card, ErrorState, Kpi, Loading, Pnl } from "@/components/ui";
 import { ModeBadge } from "@/components/ModeBadge";
 import {
   useAccounts,
@@ -18,6 +18,7 @@ import {
   useOpenOrders,
   usePortfolio,
   usePositions,
+  useStrategies,
 } from "@/lib/query/hooks";
 import { useStream } from "@/lib/ws/store";
 import type { PositionRow, TradeMode } from "@/lib/api/types";
@@ -38,6 +39,7 @@ export default function OverviewPage() {
   const accounts = useAccounts();
   const halt = useHaltState();
   const open = useOpenOrders();
+  const strategies = useStrategies();
   const ws = useStream();
 
   const positions = [
@@ -78,7 +80,19 @@ export default function OverviewPage() {
     <div className="space-y-6">
       {/* KPI row */}
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Kpi label="활성 전략" value={<DeferredBadge note="전략 엔진은 M4" />} />
+        <Kpi
+          label="전략"
+          value={
+            strategies.error ? "⚠" : `${strategies.data?.strategies.length ?? "—"} 개`
+          }
+          hint={
+            strategies.error
+              ? "불러오기 실패"
+              : strategies.data?.enabled
+                ? "엔진 ON"
+                : "엔진 OFF"
+          }
+        />
         <Kpi
           label="열린 주문"
           value={open.error ? "⚠" : `${open.data?.orders.length ?? "—"} 건`}

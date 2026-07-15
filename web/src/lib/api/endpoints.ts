@@ -5,10 +5,11 @@
  * request path and response type. React Query hooks (lib/query/hooks.ts) call
  * these; nothing else should hit `fetch` directly.
  *
- * What the M3 backend actually serves (the rest is M4):
- *   reads  — system, market, orders(open/history), portfolio, accounts, risk
- *   writes — FUT *paper* orders (quote/commit/amend/cancel/reconcile), killswitch
- * KR/OVS order paths return 403 LIVE_DISABLED; strategy routes are M0 stubs.
+ * What the backend serves (M2~M5):
+ *   reads  — system, market, orders, portfolio, accounts, risk, strategy, live-arming
+ *   writes — FUT paper + KR/OVS LIVE orders (quote/commit/amend/cancel/reconcile),
+ *            killswitch, strategy toggle/run, live-arming (실거래 무장)
+ * LIVE orders require `allow_live` armed (env + site confirm); otherwise 403 / gate reject.
  */
 
 import { apiGet, apiPost } from "./client";
