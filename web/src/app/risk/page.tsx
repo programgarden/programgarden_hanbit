@@ -12,6 +12,7 @@
 import { useState } from "react";
 import { Card, DeferredBadge, ErrorState, Loading, PageHeader } from "@/components/ui";
 import { KillSwitchPanel } from "./KillSwitchPanel";
+import { LiveArmingPanel } from "./LiveArmingPanel";
 import { useRiskEvents, useRiskLimits } from "@/lib/query/hooks";
 import { useStream } from "@/lib/ws/store";
 import type { Severity } from "@/lib/api/types";
@@ -89,8 +90,10 @@ export default function RiskPage() {
           )}
         </Card>
 
-        {/* Kill switch + violations */}
+        {/* Live arming + kill switch + violations */}
         <div className="space-y-4">
+          <LiveArmingPanel />
+
           <KillSwitchPanel />
 
           <Card

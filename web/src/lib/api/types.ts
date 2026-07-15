@@ -423,3 +423,11 @@ export interface StrategyRunResponse {
   enabled: boolean;
   fired: StrategyRunResult[];
 }
+
+// ── Live arming (실거래 무장 — 사이트 토글) ───────────────────────────────────
+export interface LiveArmingResponse {
+  armed: boolean; // 지금 실거래 무장 상태(발주 가능 여부)
+  permission: boolean; // env HANBIT_ALLOW_LIVE — 허용 ceiling(false 면 무장 불가)
+  ok?: boolean; // POST 결과
+  reason?: string; // PERMISSION_OFF | BAD_CONFIRM
+}

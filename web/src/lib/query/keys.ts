@@ -32,4 +32,5 @@ export const qk = {
     ["ohlcv", market, symbol, period, count] as const,
 
   strategies: ["strategies"] as const,
+  liveArming: ["live-arming"] as const,
 };

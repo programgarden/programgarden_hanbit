@@ -68,6 +68,10 @@ _DEFAULT_EXCHANGE = {
     MARKET_OVERSEAS_STOCK: "",
 }
 
+# 사이트 실거래 무장(arming) 확인 문구 — 사용자가 정확히 타이핑해야 무장(체크박스 하나로 실거래
+# 금지). env HANBIT_ALLOW_LIVE(허용 ceiling)가 true 여야 무장 가능 — env=false 면 절대 못 켠다.
+LIVE_ARM_PHRASE = "실거래 활성화"
+
 
 class OrderService:
     """주문 파이프라인 오케스트레이션."""
@@ -86,6 +90,11 @@ class OrderService:
         self._repo = repo
         self._session = session
         self._settings = settings
+        # 실거래 무장(arming) 런타임 상태 — 사이트 토글이 바꾼다(강한 확인). 초기값=env 허용값
+        # (기존 동작 보존: env=true→무장, env=false→무장 불가). env HANBIT_ALLOW_LIVE 가
+        # 허용 ceiling — false 면 arm_live 가 거부하므로 "env=false → 실주문 0" 불변식 보존.
+        # registry/게이트(allow_live_fn)/_get_mutable 가 매 판정마다 _allow_live()=_live_armed 판독.
+        self._live_armed = bool(getattr(settings, "hanbit_allow_live", False))
         self._bus = event_bus
         self._locks = locks or OrderLocks()
         # 계좌-TR 직렬 큐(§8) — reconcile 의 계좌 TR(CIDBQ01500/02400)이 경유한다. 버킷별
@@ -93,8 +102,10 @@ class OrderService:
         # 폴링 TR 도 반드시 이 큐를 경유해야 한다(tracker 콜백 push 경로는 호출건수 무관).
         self._tr = tr_queue or AccountTrQueue.from_settings(settings)
         self._fx = FxRateProvider.from_settings(settings, repo)
-        # 게이트에 settings 주입(§6/§17 L1-4): LIVE allow_live 마스터 + 소액 per-order 캡 단일출처.
-        self._gate = RiskGate(repo, fx=self._fx, settings=settings)
+        # 게이트에 settings 주입(§6/§17 L1-4) + allow_live_fn=런타임 무장 콜백(사이트 토글 반영).
+        self._gate = RiskGate(
+            repo, fx=self._fx, settings=settings, allow_live_fn=self._allow_live
+        )
         # 런타임 EngineState — **버킷별**(M4a §3.2, 단일 글로벌 폐기). place/amend/cancel/
         # 게이트 step0/실시간 writer 가 `engine_for(bucket_of(market))` 로 해당 버킷 상태를 읽는다.
         #   - paper 버킷 = 기존 config 의도(PAPER_TRADING→ACTIVE=빈 책 부트 결과). 주입된
@@ -121,8 +132,48 @@ class OrderService:
         return self._confirm_tokens.consume(token, intent)
 
     def _allow_live(self) -> bool:
-        """HANBIT_ALLOW_LIVE 마스터 토글(§2) — registry allow_live 게이트에 전달."""
+        """실거래 무장 상태(런타임) — registry/게이트/_get_mutable 단일 판정."""
+        return self._live_armed
+
+    def _live_permitted(self) -> bool:
+        """env HANBIT_ALLOW_LIVE — 실거래 허용 ceiling(false 면 무장 자체 불가)."""
         return bool(getattr(self._settings, "hanbit_allow_live", False))
+
+    def live_arming(self) -> dict:
+        """현재 무장 상태 + env 허용(permission). 사이트가 조회한다."""
+        return {"armed": self._live_armed, "permission": self._live_permitted()}
+
+    async def arm_live(self, confirm: str, *, actor: str = "operator") -> dict:
+        """사이트 실거래 무장 — env 허용 + 정확한 확인 문구 필요. 실주문 문을 연다(감사 남김).
+
+        env HANBIT_ALLOW_LIVE=false 면 PERMISSION_OFF 로 거부(불변식: env=false→실주문 0).
+        확인 문구 불일치면 BAD_CONFIRM. 성공 시 critical risk_event + audit_log + 메트릭.
+        """
+        if not self._live_permitted():
+            return {"ok": False, "reason": "PERMISSION_OFF", **self.live_arming()}
+        if (confirm or "").strip() != LIVE_ARM_PHRASE:
+            return {"ok": False, "reason": "BAD_CONFIRM", **self.live_arming()}
+        self._live_armed = True
+        await self._repo.insert_risk_event(
+            event_type="live_armed", severity="critical", scope="live",
+            message="LIVE trading ARMED via site (real orders now possible)",
+        )
+        await self._repo.insert_audit(actor=actor, action="live.arm", target="live",
+                                      detail={"armed": True})
+        await self._repo.incr_metric("live_armed")
+        return {"ok": True, **self.live_arming()}
+
+    async def disarm_live(self, *, actor: str = "operator") -> dict:
+        """실거래 무장 해제 — 언제나 허용(킬스위치처럼 즉시). 실주문 문을 닫는다(감사 남김)."""
+        was = self._live_armed
+        self._live_armed = False
+        if was:
+            await self._repo.insert_risk_event(
+                event_type="live_disarmed", severity="warning", scope="live",
+                message="LIVE trading disarmed",
+            )
+            await self._repo.insert_audit(actor=actor, action="live.disarm", target="live")
+        return {"ok": True, **self.live_arming()}
 
     def engine_for(self, bucket: str | None) -> EngineState:
         """버킷→EngineState 단일 접근자(§3.2). 미지 시장(bucket None) → LIVE_DISABLED 거부.

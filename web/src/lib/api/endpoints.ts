@@ -31,6 +31,7 @@ import type {
   QuarantineResponse,
   Quote,
   QuoteResponse,
+  LiveArmingResponse,
   RiskEventsResponse,
   RiskLimitsResponse,
   StrategiesResponse,
@@ -97,3 +98,8 @@ export const getStrategies = () => apiGet<StrategiesResponse>("/strategy");
 export const toggleStrategies = (enabled: boolean) =>
   apiPost<StrategyToggleResponse>("/strategy/toggle", { enabled });
 export const runStrategies = () => apiPost<StrategyRunResponse>("/strategy/run", {});
+
+// ── Live arming (실거래 무장) ───────────────────────────────────────────────
+export const getLiveArming = () => apiGet<LiveArmingResponse>("/system/live-arming");
+export const setLiveArming = (armed: boolean, confirm?: string) =>
+  apiPost<LiveArmingResponse>("/system/live-arming", { armed, confirm });

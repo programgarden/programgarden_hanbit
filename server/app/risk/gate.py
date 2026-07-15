@@ -79,17 +79,24 @@ class RiskContext:
 class RiskGate:
     """주문 단일 진입 사전검증 게이트."""
 
-    def __init__(self, repo: OrdersRepo, *, fx=None, settings=None) -> None:
+    def __init__(self, repo: OrdersRepo, *, fx=None, settings=None, allow_live_fn=None) -> None:
         self._repo = repo
         self._fx = fx  # FxRateProvider | None — None 이면 FX 캡·노출 단계 skip(M2 호환)
         # settings 주입(§6/§17 L1-4): LIVE 마스터 토글 allow_live + 소액 per-order 캡의 단일출처.
         # 미주입(M2 단위테스트)이면 allow_live=False → LIVE 시장 하드거부(기존 동작 보존).
         self._settings = settings
-        self._allow_live = bool(getattr(settings, "hanbit_allow_live", False))
+        # allow_live_fn: 런타임 무장(arming) 상태를 매 판정마다 읽는 콜백(사이트 토글 반영).
+        # 미주입이면 settings 캐시값(정적) — 기존 단위테스트 동작 보존.
+        self._allow_live_fn = allow_live_fn
+        self._allow_live_static = bool(getattr(settings, "hanbit_allow_live", False))
         # 첫주문 완충 가드(§10.2) — LIVE 첫 주문 단계 단일종목 제한(기본 on). Gate B 성공 후 해제.
         self._first_order_guard = bool(getattr(settings, "hanbit_live_first_order_guard", True))
         # 누적/일일 명목 캡(§6 step4''/§17 L1-3) — LIVE 당일 발주 명목 합(KRW) 상한. 0/None=미적용.
         self._daily_notional_cap_krw = getattr(settings, "hanbit_live_daily_notional_cap_krw", None)
+
+    def _live_allowed(self) -> bool:
+        """지금 LIVE 발주가 허용되는가 — 런타임 무장 상태(콜백) 우선, 없으면 settings 정적값."""
+        return self._allow_live_fn() if self._allow_live_fn else self._allow_live_static
 
     def _live_cap_native(self, market: str) -> float | None:
         """LIVE per-order 소액 캡(주문통화 단위, config 단일출처 §2/§11). 미설정 시 None(skip)."""
@@ -164,9 +171,9 @@ class RiskGate:
                     intent, RiskResult.REJECT, ["FUT_NOT_HKEX"], "critical", reclassified
                 )
         elif bucket == BUCKET_LIVE:
-            # KR/OVS(LIVE): allow_live 마스터 토글이 꺼져 있으면 하드 거부(registry·부트와 3중 방어,
-            # §17 L1-4 — 게이트 단독으로도 누수 없음). 켜져 있으면 모드=live 정합만 확인.
-            if not self._allow_live:
+            # KR/OVS(LIVE): allow_live 마스터 토글(런타임 무장)이 꺼져 있으면 하드 거부(registry·
+            # 부트와 3중 방어, §17 L1-4 — 게이트 단독으로도 누수 없음). 켜져 있으면 모드=live 정합.
+            if not self._live_allowed():
                 return await self._finalize(
                     intent, RiskResult.REJECT, ["LIVE_DISABLED"], "critical", reclassified
                 )

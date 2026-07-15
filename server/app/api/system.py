@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Request
+from pydantic import BaseModel
 
 from app.config import get_settings
 from app.core.mode_matrix import (
@@ -112,3 +113,26 @@ async def system_clock() -> dict[str, Any]:
             },
         }
     )
+
+
+class LiveArmingBody(BaseModel):
+    armed: bool
+    confirm: str | None = None  # armed=true 시 정확한 확인 문구 필요
+
+
+@router.get("/live-arming")
+async def get_live_arming(request: Request) -> dict[str, Any]:
+    """실거래 무장 상태 + env 허용(permission) — 사이트가 조회(§M4d 사이트 토글)."""
+    return success(request.app.state.order_service.live_arming())
+
+
+@router.post("/live-arming")
+async def set_live_arming(body: LiveArmingBody, request: Request) -> dict[str, Any]:
+    """실거래 무장/해제 — armed=true 는 env 허용 + 정확한 확인 문구 필요(실제 돈).
+
+    env HANBIT_ALLOW_LIVE=false 면 PERMISSION_OFF 로 거부(불변식 보존). 무장 해제는 언제나 허용.
+    """
+    svc = request.app.state.order_service
+    if body.armed:
+        return success(await svc.arm_live(body.confirm or ""))
+    return success(await svc.disarm_live())

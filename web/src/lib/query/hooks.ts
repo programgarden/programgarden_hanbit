@@ -198,3 +198,19 @@ export const useRunStrategies = () => {
     },
   });
 };
+
+// ── Live arming (실거래 무장) ───────────────────────────────────────────────────
+export const useLiveArming = () =>
+  useQuery({ queryKey: qk.liveArming, queryFn: api.getLiveArming, refetchInterval: POLL });
+
+export const useSetLiveArming = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ armed, confirm }: { armed: boolean; confirm?: string }) =>
+      api.setLiveArming(armed, confirm),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.liveArming });
+      qc.invalidateQueries({ queryKey: qk.health });
+    },
+  });
+};
