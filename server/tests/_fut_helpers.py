@@ -75,6 +75,7 @@ def fake_settings(
         hanbit_live_per_order_cap_krw=100_000,
         hanbit_live_per_order_cap_usd=50.0,
         hanbit_live_first_order_guard=True,
+        hanbit_live_daily_notional_cap_krw=300_000,
         # M3a FX (FxRateProvider.from_settings)
         hanbit_fx_usd_krw=1400.0,
         hanbit_fx_hkd_krw=180.0,

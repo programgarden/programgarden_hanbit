@@ -1,7 +1,9 @@
-"""주문 라우터 (M2) — 해외선물 paper 한정. KR/OVS 는 403 LIVE_DISABLED.
+"""주문 라우터 (M2 → M4d) — 해외선물 paper + 국내·해외주식 LIVE(allow_live=true 일 때만).
 
 quote(견적) → commit(발사) / amend / cancel / reconcile / open / history.
 모든 경로는 order_service 단일 진입점(registry + 리스크 게이트 + 락) 을 거친다.
+LIVE 시장은 allow_live=false 면 여기서 403(API 레이어 방어), true 면 quote→commit 2단계
+확인 토큰(서버측 one-time·TTL·intent 바인딩, §10.1)을 강제한다.
 """
 
 from __future__ import annotations
@@ -16,7 +18,13 @@ from pydantic import BaseModel, Field
 
 from app.adapters.order_base import OrderError
 from app.api.deps import get_order_service, get_repo
-from app.core.mode_matrix import MARKET_OVERSEAS_FUTUREOPTION
+from app.core.mode_matrix import (
+    BUCKET_LIVE,
+    MARKET_KOREA_STOCK,
+    MARKET_OVERSEAS_FUTUREOPTION,
+    MARKET_OVERSEAS_STOCK,
+    bucket_of,
+)
 from app.models.order_dto import IntentKind, OrderIntent, OrderType, Side
 from app.models.schemas import failure, success
 from app.repositories.orders_repo import OrdersRepo
@@ -46,6 +54,7 @@ class CommitBody(BaseModel):
     due_yymm: str | None = None
     intent: IntentKind = IntentKind.ENTRY
     client_order_id: str | None = None
+    confirm_token: str | None = None  # LIVE commit 필수(quote 발급 서버측 토큰, §10.1)
 
 
 class AmendBody(BaseModel):
@@ -127,25 +136,56 @@ async def whitelist(
     return success({"market": market, "symbols": symbols})
 
 
+_LIVE_API_MARKETS = frozenset({MARKET_KOREA_STOCK, MARKET_OVERSEAS_STOCK})
+
+
+def _api_market_open(svc: OrderService, market: str) -> bool:
+    """API 가 주문을 받는 시장인가 — FUT(paper)는 항상, LIVE(KR/OVS)는 allow_live=true 일 때만.
+
+    allow_live=false 면 LIVE 시장은 여기서 403(LIVE_DISABLED) — 게이트 도달 전 차단(3중 방어의
+    API 레이어). 미지 시장도 닫힘.
+    """
+    if market == MARKET_OVERSEAS_FUTUREOPTION:
+        return True
+    if market in _LIVE_API_MARKETS:
+        return svc._allow_live()
+    return False
+
+
 @router.post("/quote")
 async def quote(body: CommitBody, svc: SvcDep):
-    if body.market != MARKET_OVERSEAS_FUTUREOPTION:
+    if not _api_market_open(svc, body.market):
         return _live_disabled(body.market)
-    decision = await svc.preview(_to_intent(body))
-    return success(
-        {
-            "decision": decision.model_dump(mode="json"),
-            "confirm_token": uuid.uuid4().hex if decision.ok else None,
-        }
-    )
+    intent = _to_intent(body)
+    decision = await svc.preview(intent)
+    # LIVE 는 서버측 저장 토큰(one-time·TTL·intent 바인딩, §10.1). FUT 는 기존 stateless(하위호환).
+    token = None
+    if decision.ok:
+        if bucket_of(body.market) == BUCKET_LIVE:
+            token = svc.issue_confirm_token(intent)
+        else:
+            token = uuid.uuid4().hex
+    return success({"decision": decision.model_dump(mode="json"), "confirm_token": token})
 
 
 @router.post("/commit")
 async def commit(body: CommitBody, svc: SvcDep):
-    if body.market != MARKET_OVERSEAS_FUTUREOPTION:
+    if not _api_market_open(svc, body.market):
         return _live_disabled(body.market)
+    intent = _to_intent(body)
+    # LIVE 사람경로는 유효 confirm_token 필수(quote 없이 commit 직접 우회 차단, §10.1/§17 L1-10).
+    if bucket_of(body.market) == BUCKET_LIVE and not svc.check_confirm_token(
+        intent, body.confirm_token
+    ):
+        return JSONResponse(
+            status_code=422,
+            content=failure(
+                "CONFIRM_TOKEN_REQUIRED",
+                "live commit requires a valid confirm_token from /orders/quote",
+            ),
+        )
     try:
-        result = await svc.place(_to_intent(body))
+        result = await svc.place(intent)
     except OrderError as exc:
         return _order_error(exc)
     return success(result) if result.get("ok") else JSONResponse(

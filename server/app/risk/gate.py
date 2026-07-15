@@ -86,6 +86,10 @@ class RiskGate:
         # 미주입(M2 단위테스트)이면 allow_live=False → LIVE 시장 하드거부(기존 동작 보존).
         self._settings = settings
         self._allow_live = bool(getattr(settings, "hanbit_allow_live", False))
+        # 첫주문 완충 가드(§10.2) — LIVE 첫 주문 단계 단일종목 제한(기본 on). Gate B 성공 후 해제.
+        self._first_order_guard = bool(getattr(settings, "hanbit_live_first_order_guard", True))
+        # 누적/일일 명목 캡(§6 step4''/§17 L1-3) — LIVE 당일 발주 명목 합(KRW) 상한. 0/None=미적용.
+        self._daily_notional_cap_krw = getattr(settings, "hanbit_live_daily_notional_cap_krw", None)
 
     def _live_cap_native(self, market: str) -> float | None:
         """LIVE per-order 소액 캡(주문통화 단위, config 단일출처 §2/§11). 미설정 시 None(skip)."""
@@ -216,6 +220,14 @@ class RiskGate:
                     if est:
                         warns.append("FX_ESTIMATED")
 
+        # 4''. 누적/일일 명목 캡(§6 step4''/§17 L1-3) — 소액 다발 누적 방어(LIVE 전략 자동경로
+        #      1순위 방어). 당일 누적(risk_state.daily_notional_used_krw) + 이번 주문 ≤ 캡.
+        if bucket == BUCKET_LIVE and notional_krw is not None and self._daily_notional_cap_krw:
+            rs = await self._repo.get_risk_state(bucket)
+            used = float(rs.get("daily_notional_used_krw") or 0.0) if rs else 0.0
+            if used + notional_krw > float(self._daily_notional_cap_krw):
+                rejects.append("DAILY_NOTIONAL_CAP")
+
         # 5. 노출/집중도 INV-7 (projected-after-fill, §5.4) — 빈 책이면 skip(부트스트랩).
         if self._fx is not None and ctx.positions and notional is not None:
             nrate, _ = self._fx.to_krw(ccy)  # add_eval = 중립 환율
@@ -245,6 +257,12 @@ class RiskGate:
             rejects.append("MAX_POSITIONS")
         if ctx.open_orders_count >= limits.max_open_orders:
             rejects.append("MAX_OPEN_ORDERS")
+
+        # 6'. 첫주문 완충 가드(§10.2) — LIVE 는 가드 on 동안 **단일종목만**(이미 다른 종목을 보유
+        #     하면 신규 종목 ENTRY 차단). 첫 실거래를 한 종목·소액으로 제한(Gate B 성공 후 해제).
+        if bucket == BUCKET_LIVE and self._first_order_guard:
+            if held - {intent.symbol}:
+                rejects.append("FIRST_ORDER_GUARD")
 
         # 7. orderable (best-effort) — 헤드룸은 KRW floor 환산(보수=작게, §6 방향표).
         if ctx.orderable_amount is not None and notional is not None:

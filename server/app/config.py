@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     hanbit_live_first_order_guard: bool = Field(
         default=True, alias="HANBIT_LIVE_FIRST_ORDER_GUARD"
     )
+    # 누적/일일 명목 캡(§6 step4''/§17 L1-3) — LIVE 버킷 당일 발주 명목 합(KRW) 상한. 소액 다발
+    # 누적 방어(per-order 캡만으론 못 막는다). 거래일 경계 리셋은 DailyLossMonitor 소유(§15).
+    # [R] 잠정 = per-order 캡 × 3(기본 100,000×3=300,000; 실계좌 충전 후 재조정).
+    hanbit_live_daily_notional_cap_krw: int = Field(
+        default=300_000, alias="HANBIT_LIVE_DAILY_NOTIONAL_CAP_KRW"
+    )
 
     # 주문 엔진 상태 (M2). 기본 READ_ONLY = 주문 차단. paper FUT 주문 경로를 열려면
     # PAPER_TRADING 으로 명시 전환. LIVE 시장(KR/OVS) 주문은 M4까지 이와 무관하게 닫힘.

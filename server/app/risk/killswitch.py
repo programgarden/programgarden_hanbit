@@ -68,16 +68,17 @@ async def engage(service: OrderService, *, scope: str) -> dict:
 
 
 async def engage_level2(service: OrderService, *, scope: str, run_seq: int = 0) -> dict:
-    """레벨2 — L1(halt+일괄취소) 후 paper 포지션 reduce-only **flatten**(2단계 확인은 API).
+    """레벨2 — L1(halt+일괄취소) 후 대상 버킷 포지션 reduce-only **flatten**(2단계 확인은 API).
 
-    flatten 은 paper 전용(§0.3/§9 fake-테스트만) — `_target_buckets` 에 paper 가 포함될 때만
-    `flatten_all_positions('paper')` 를 발사한다. LIVE 는 청산 경로 부재 → flatten 없음.
+    `_target_buckets(scope)` 의 각 버킷을 flatten 한다(§9 진화). LIVE 는 allow_live=false 면
+    `flatten_all_positions` 가 안전 no-op(실포지션 0)을 반환하므로 무해하다. `flatten` 은
+    버킷별 결과 맵(`{bucket: {fired,pending,skipped}}`).
     """
     l1 = await engage(service, scope=scope)
-    flat = None
-    if BUCKET_PAPER in _target_buckets(scope):
-        flat = await flatten_all_positions(service, bucket=BUCKET_PAPER, run_seq=run_seq)
-    return {**l1, "level": 2, "flatten": flat}
+    flats: dict[str, dict] = {}
+    for b in _target_buckets(scope):
+        flats[b] = await flatten_all_positions(service, bucket=b, run_seq=run_seq)
+    return {**l1, "level": 2, "flatten": flats}
 
 
 async def release(service: OrderService, *, scope: str) -> None:
@@ -101,21 +102,27 @@ async def _publish_halt(service: OrderService) -> None:
 
 
 async def level1(service: OrderService, *, bucket: str) -> dict:
-    """버킷 단위 L1. **버킷 분기 선행** — LIVE 는 no-op-with-warning, paper 만 실제 취소."""
+    """버킷 단위 L1 미체결 일괄취소 + 격리 raw-cancel(§7.2/§9).
+
+    **LIVE 버킷 allow_live 분기(M4d §9)**:
+    - allow_live=false → 주문 경로 부재 → **명시적 no-op-with-warning**(실주문 0이라 취소할
+      것도 없음; cancel 루프에 LIVE open order 진입 0).
+    - allow_live=true  → LIVE 미체결도 **실제 취소**(위험감축 lane — 끄려면 켜져 있어야 하고,
+      취소는 멱등·노출감소라 allow_live 와 무관하게 허용되어야 안전).
+    """
     repo = service._repo
-    if bucket == BUCKET_LIVE:
-        # LIVE 는 주문 경로 부재(§0.2-2/§9) → 명시적 no-op-with-warning. cancel 루프에 LIVE
-        # open order 를 절대 들이지 않는다(전수 순회 금지). 방어는 침묵하지 않는다(§0.2-4).
+    if bucket == BUCKET_LIVE and not service._allow_live():
+        # allow_live=false → LIVE 구조적 no-op(§0.2-2/§9). 방어는 침묵하지 않는다(§0.2-4).
         await repo.insert_risk_event(
             event_type="kill_switch_live_noop",
             severity="warning",
             scope=BUCKET_LIVE,
-            message="LIVE bucket has no order path — kill-switch L1 is a structural no-op",
+            message="LIVE order path closed (allow_live=false) — kill-switch L1 is a no-op",
         )
         return {"bucket": BUCKET_LIVE, "no_op": True, "canceled": 0}
 
-    # paper 버킷 — 미체결 일괄취소(M2 재사용, 위험감축 lane) + 격리 raw-cancel(§7.2).
-    cancel_res = await service.cancel_all_open(reason="kill_switch")
+    # paper(항상) / LIVE(allow_live=true) — 미체결 일괄취소(위험감축 lane) + 격리 raw-cancel.
+    cancel_res = await service.cancel_all_open(reason="kill_switch", bucket=bucket)
     q_canceled, q_excluded = await _raw_cancel_quarantined(service, markets_of(bucket))
     return {
         "bucket": bucket,
@@ -168,13 +175,19 @@ async def flatten_all_positions(
     run_seq: int = 0,
     market_closed: bool = False,
 ) -> dict:
-    """보유 포지션 전부 reduce-only EXIT 로 청산(guarded order_service). **paper 전용**.
+    """보유 포지션 전부 reduce-only EXIT 로 청산(guarded order_service). **버킷별**(§9 진화).
 
-    `assert bucket=='paper'` + `positions_for('paper')` 만 순회(전수 순회 금지, Lens2-C1).
+    `positions_for(bucket)` **만** 순회(전수 순회 금지, Lens2-C1). LIVE 는 allow_live=false 면
+    청산 경로가 닫혀 있으므로 **안전 no-op**(청산할 실포지션 0). allow_live=true 면 LIVE 포지션도
+    reduce-only EXIT 로 청산한다 — reduce-only 는 게이트 effective_exit 로 캡/notional 우회
+    통과(§5.5)라 킬스위치가 자기 가드에 막히지 않는다. LIVE 청산은 LIMIT(avg/현재가 참조)로
+    명목을 정의해 발사하며, 시장가+슬리피지 fallback 은 [L]/Gate B 후속(§9 a~d).
     장마감(`market_closed`)이면 청산 불가 → pending 큐(symbol) + critical, 개장 시
     `resume_pending_flatten` 가 **현재 스냅에서 재계산**(verbatim 재발사 금지, Lens2-M1).
     """
-    assert bucket == BUCKET_PAPER, "flatten is paper-only (LIVE 청산 경로 부재 — §0.3)"
+    if bucket == BUCKET_LIVE and not service._allow_live():
+        # LIVE 닫힘 → 청산할 실포지션 0. 어댑터 미진입 안전 no-op(assert 대신 게이트 진화 §17 L3-7).
+        return {"fired": [], "pending": [], "skipped": []}
     repo = service._repo
     fired, pending, skipped = [], [], []
     for p in await repo.positions_for(bucket):
@@ -210,7 +223,8 @@ async def resume_pending_flatten(
     이미 flat 인 symbol 은 드롭, reduce-only 클램프(현재 보유 qty). run_seq 는 멱등키를
     이전 청산 시도와 분리해 재발사를 허용한다(`flat:{bucket}:{symbol}:{seq}`).
     """
-    assert bucket == BUCKET_PAPER, "flatten is paper-only"
+    if bucket == BUCKET_LIVE and not service._allow_live():
+        return {"fired": [], "dropped": list(symbols)}
     repo = service._repo
     positions = {p.get("symbol"): p for p in await repo.positions_for(bucket)}
     fired, dropped = [], []

@@ -4,8 +4,9 @@
 포트폴리오·위험의 전 흐름(aggregator/fx/killswitch/flatten)을 fake-LS 로 실제로 돌려
 **KR/OVS(LIVE) 주문이 한 번도 발사되지 않음**을 부작용 레벨에서 확인한다(§12).
 
-- killswitch L1(LIVE 버킷) → 어댑터 미진입(no-op-with-warning).
-- flatten(LIVE) → 청산 경로 부재(assert paper-only) → 어댑터 미진입.
+- killswitch L1(LIVE 버킷, allow_live=false) → 어댑터 미진입(no-op-with-warning).
+- flatten(LIVE, allow_live=false) → 청산 경로 닫힘 → 어댑터 미진입 안전 no-op(§17 L3-7).
+  (allow_live=true LIVE 실동작은 test_killswitch_live 가 커버.)
 - killswitch engage(global) → LIVE 버킷에 place/amend 0(위험감축 cancel 만 허용).
 - aggregator + LIVE tracker 콜백 → 주문 0(LIVE tracker read-only — 집계 상태만 갱신).
 """
@@ -13,8 +14,6 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-
-import pytest
 
 from app.core.mode_matrix import (
     BUCKET_LIVE,
@@ -59,10 +58,11 @@ async def test_killswitch_level1_live_never_touches_adapter(monkeypatch):
     assert fake.calls == []  # place/amend/cancel 어느 것도 LIVE 에서 발사되지 않음
 
 
-async def test_flatten_refuses_live_bucket(monkeypatch):
+async def test_flatten_live_bucket_is_noop_when_allow_live_false(monkeypatch):
+    # allow_live=false → LIVE 청산 경로 닫힘 → 어댑터 미진입 안전 no-op(§17 L3-7 진화).
     svc, _repo, fake = await _svc(monkeypatch)
-    with pytest.raises(AssertionError):  # LIVE 청산 경로 부재(§0.3)
-        await killswitch.flatten_all_positions(svc, bucket=BUCKET_LIVE)
+    out = await killswitch.flatten_all_positions(svc, bucket=BUCKET_LIVE)
+    assert out == {"fired": [], "pending": [], "skipped": []}
     assert fake.calls == []
 
 

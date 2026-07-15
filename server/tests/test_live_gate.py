@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from app.core.engine_state import EngineState
-from app.core.mode_matrix import MARKET_KOREA_STOCK, MARKET_OVERSEAS_STOCK
+from app.core.mode_matrix import BUCKET_LIVE, MARKET_KOREA_STOCK, MARKET_OVERSEAS_STOCK
 from app.models.order_dto import OrderIntent, OrderType, Side
 from app.portfolio.fx import FxRateProvider
 from app.risk.gate import RiskContext, RiskGate
@@ -107,3 +107,43 @@ async def test_live_rejected_when_engine_not_active():
     d = await gate.pre_check(_kr(), engine_state=EngineState.READ_ONLY, ctx=RiskContext())
     assert not d.ok
     assert "ENGINE_NOT_ACTIVE" in d.reasons
+
+
+# ── 첫주문 완충 가드(§10.2): LIVE 는 가드 on 동안 단일종목만 ─────────────────
+def _held(symbol):
+    return RiskContext(positions=[{
+        "symbol": symbol, "eval_krw": 50000.0, "market": MARKET_KOREA_STOCK,
+        "currency": "KRW", "position_side": "long", "qty": 1,
+    }])
+
+
+async def test_first_order_guard_blocks_second_symbol():
+    gate = await _gate(allow_live=True)  # first_order_guard 기본 on
+    d = await gate.pre_check(_kr(symbol="005930"), engine_state=ACTIVE, ctx=_held("000660"))
+    assert not d.ok
+    assert "FIRST_ORDER_GUARD" in d.reasons  # 이미 다른 종목 보유 → 신규 종목 차단
+
+
+async def test_first_order_guard_allows_same_symbol():
+    gate = await _gate(allow_live=True)
+    d = await gate.pre_check(_kr(symbol="005930"), engine_state=ACTIVE, ctx=_held("005930"))
+    assert "FIRST_ORDER_GUARD" not in d.reasons  # 같은 종목 유지는 가드 통과
+
+
+# ── 누적/일일 명목 캡(§6 step4''): 당일 누적 + 이번 주문 > 캡 → 거부 ──────────
+async def test_daily_notional_cap_rejects_over_accumulation():
+    repo = await make_repo()
+    gate = RiskGate(repo, fx=_fx(repo), settings=fake_settings(allow_live=True))
+    # 캡 300,000. 당일 누적 290,000 → 50,000 주문(340,000) 초과 거부.
+    await repo.set_risk_state(BUCKET_LIVE, daily_notional_used_krw=290_000)
+    d = await gate.pre_check(_kr(price=50000), engine_state=ACTIVE, ctx=RiskContext())
+    assert not d.ok
+    assert "DAILY_NOTIONAL_CAP" in d.reasons
+
+
+async def test_daily_notional_cap_passes_under_limit():
+    repo = await make_repo()
+    gate = RiskGate(repo, fx=_fx(repo), settings=fake_settings(allow_live=True))
+    await repo.set_risk_state(BUCKET_LIVE, daily_notional_used_krw=100_000)
+    d = await gate.pre_check(_kr(price=50000), engine_state=ACTIVE, ctx=RiskContext())
+    assert "DAILY_NOTIONAL_CAP" not in d.reasons  # 150,000 < 300,000

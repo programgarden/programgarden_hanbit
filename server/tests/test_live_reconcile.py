@@ -157,3 +157,14 @@ async def test_live_place_blocked_when_allow_live_false(monkeypatch):
     res = await svc.place(_kr_intent(price=50000))
     assert res["ok"] is False
     assert not any(c[0] == "place" for c in fake.calls)  # 어댑터 미진입
+
+
+async def test_live_place_accumulates_daily_notional(monkeypatch):
+    """LIVE 성공 발주분이 risk_state.daily_notional_used_krw 에 누적된다(§6 step4'')."""
+    svc, repo, fake = await _live_svc(monkeypatch)
+    svc.engine_for(BUCKET_LIVE).set(EngineState.ACTIVE)
+    for ordno in ("900", "901"):  # OrdNo 유니크(account,broker_order_id 충돌 회피)
+        fake.place_ack = OrderAck(ok=True, broker_ord_no=ordno, rsp_cd="00040")
+        assert (await svc.place(_kr_intent(price=50000)))["ok"] is True
+    rs = await repo.get_risk_state(BUCKET_LIVE)
+    assert rs["daily_notional_used_krw"] == 100000  # 2 × 50,000 KRW(ceil 1.0)

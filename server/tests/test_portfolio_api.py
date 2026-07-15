@@ -171,7 +171,8 @@ async def test_killswitch_l2_requires_confirm_token(api):
         },
     )).json()["data"]
     assert r2["state"] == "killed" and r2["level"] == 2
-    fired = r2["flatten"]["fired"]
+    # flatten 은 버킷별 맵(§9 진화) — paper 보유 롱 5 → reduce-only SELL.
+    fired = r2["flatten"]["paper"]["fired"]
     assert len(fired) == 1 and fired[0]["side"] == "sell" and fired[0]["qty"] == 5
     assert await repo.get_halt_state("global") == "killed"
 

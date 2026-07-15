@@ -181,10 +181,13 @@ async def test_flatten_places_reduce_only_exit(monkeypatch):
     assert placed.qty == 5 and placed.client_order_id == "flat:paper:ADZ25:0"
 
 
-async def test_flatten_paper_only_assert(monkeypatch):
-    svc, repo, fake = await _svc(monkeypatch)
-    with pytest.raises(AssertionError):
-        await killswitch.flatten_all_positions(svc, bucket=BUCKET_LIVE)
+async def test_flatten_live_bucket_noop_when_allow_live_false(monkeypatch):
+    # allow_live=false(기본) → LIVE 청산 경로 닫힘 → 안전 no-op(어댑터 미진입). assert 대신
+    # 게이트 진화(§17 L3-7): "거부"가 아니라 "실포지션 0이라 발사 0".
+    svc, _repo, fake = await _svc(monkeypatch)
+    out = await killswitch.flatten_all_positions(svc, bucket=BUCKET_LIVE)
+    assert out == {"fired": [], "pending": [], "skipped": []}
+    assert fake.calls == []  # LIVE 어댑터 미진입
 
 
 # ── L2: 장마감 pending_flatten → 큐+critical, 발사 안 함 ─────────────────────

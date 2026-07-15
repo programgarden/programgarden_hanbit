@@ -678,6 +678,24 @@ class OrdersRepo:
             )
             await db.commit()
 
+    async def add_daily_notional_used(self, bucket: str, delta_krw: float) -> None:
+        """당일 누적 명목(daily_notional_used_krw)에 원자적으로 delta 를 더한다(§6 step4'').
+
+        LIVE 성공 발주분을 누적해 소액 다발 캡(게이트 step4'')에 반영한다. 거래일 경계 리셋은
+        DailyLossMonitor.evaluate 가 소유(새 거래일이면 이 값을 0으로 되돌린다, §15).
+        """
+        if not delta_krw:
+            return
+        async with self._connect() as db:
+            await self._prep(db)
+            await db.execute(
+                "INSERT INTO risk_state (bucket, daily_notional_used_krw) VALUES (?, ?) "
+                "ON CONFLICT(bucket) DO UPDATE SET daily_notional_used_krw = "
+                "daily_notional_used_krw + excluded.daily_notional_used_krw, updated_at = ?",
+                (bucket, float(delta_krw), utc_now_iso()),
+            )
+            await db.commit()
+
     # ── reconcile 감사 ────────────────────────────────────────────────────
     async def start_reconcile_run(self, scope: str) -> int:
         async with self._connect() as db:

@@ -37,8 +37,10 @@ from app.orders.fill_tracker import open_order_to_fill
 from app.orders.state_machine import OrderLocks
 from app.portfolio.fx import FxRateProvider
 from app.repositories.orders_repo import OrdersRepo
+from app.risk.caps import notional_in_ccy, notional_krw_ceil
 from app.risk.gate import RiskContext, RiskGate
 from app.risk.halt import is_blocked
+from app.services.confirm_token import ConfirmTokenStore
 
 if TYPE_CHECKING:
     from app.config import Settings
@@ -107,6 +109,16 @@ class OrderService:
         # 하위호환 별칭 — `_engine`(단수)/`engine` property 는 paper 버킷을 가리킨다(deprecated).
         # 기존 코드/테스트(`svc._engine.set(...)`, main.py `order_service.engine`)가 계속 동작.
         self._engine = paper_engine
+        # 2단계 확인 토큰 저장소(§10.1) — LIVE 사람경로 quote→commit 서버측 one-time 토큰.
+        self._confirm_tokens = ConfirmTokenStore()
+
+    def issue_confirm_token(self, intent: OrderIntent) -> str:
+        """LIVE quote 통과분에 서버측 확인 토큰 발급(§10.1)."""
+        return self._confirm_tokens.issue(intent)
+
+    def check_confirm_token(self, intent: OrderIntent, token: str | None) -> bool:
+        """LIVE commit 확인 토큰 검증 + 소모(one-time·TTL·intent 바인딩)."""
+        return self._confirm_tokens.consume(token, intent)
 
     def _allow_live(self) -> bool:
         """HANBIT_ALLOW_LIVE 마스터 토글(§2) — registry allow_live 게이트에 전달."""
@@ -240,8 +252,29 @@ class OrderService:
                 await self._repo.incr_metric("orders_rejected")
 
         order = await self._repo.get_order(order_id)
+        if ack.ok:
+            # LIVE 성공 발주분을 당일 누적 명목에 더한다(§6 step4'' — 소액 다발 캡).
+            await self._bump_daily_notional(intent, ctx.multiplier)
         await self._publish("orders", {"order_id": order_id, "state": order["status"]})
         return {"ok": ack.ok, "order": order, "ack": ack.model_dump(mode="json")}
+
+    async def _bump_daily_notional(self, intent: OrderIntent, multiplier) -> None:
+        """LIVE 성공 발주 명목(KRW ceil)을 risk_state.daily_notional_used_krw 에 누적(§6 step4'').
+
+        게이트 step4'' 와 동일 공식(notional_krw_ceil)으로 계산해 드리프트를 막는다. 거래일
+        경계 리셋은 DailyLossMonitor 소유(§15). paper/미지원 통화/명목 미상은 no-op.
+        """
+        bucket = bucket_of(intent.market)
+        if bucket != BUCKET_LIVE:
+            return
+        n = notional_in_ccy(intent.qty, intent.price, multiplier)
+        if n is None:
+            return
+        ccy = intent.currency or "USD"
+        if not self._fx.supports(ccy):
+            return
+        krw, _est = notional_krw_ceil(n, ccy, self._fx)
+        await self._repo.add_daily_notional_used(bucket, krw)
 
     # ── 정정 / 취소 (게이트 경유) ─────────────────────────────────────────
     async def amend(self, order_id: int, *, qty: int, price: float) -> dict:
@@ -311,20 +344,22 @@ class OrderService:
         await self._publish("orders", {"order_id": order_id, "action": "cancel", "ok": ack.ok})
         return {"ok": ack.ok, "ack": ack.model_dump(mode="json")}
 
-    # ── 킬스위치 레벨1: 미체결 일괄취소(guarded cancel 재사용) ─────────────
-    async def cancel_all_open(self, *, reason: str = "kill_switch") -> dict:
+    # ── 킬스위치 레벨1: 미체결 일괄취소(guarded cancel 재사용, 버킷 인자화 §9) ──
+    async def cancel_all_open(
+        self, *, reason: str = "kill_switch", bucket: str = BUCKET_PAPER
+    ) -> dict:
+        markets = set(markets_of(bucket))
         open_orders = [
-            o
-            for o in await self._repo.list_open_orders()
-            if o["market"] == MARKET_OVERSEAS_FUTUREOPTION
+            o for o in await self._repo.list_open_orders() if o["market"] in markets
         ]
-        # in_doubt 는 취소 전 reconcile-우선(비존재/기체결 취소 방지)
+        # in_doubt 는 취소 전 reconcile-우선(비존재/기체결 취소 방지) — 버킷별 reconcile.
         if any(o["status"] == OrderState.IN_DOUBT.value for o in open_orders):
-            await self.reconcile(scope="kill_switch_precancel")
+            await self.reconcile(
+                scope="kill_switch_precancel",
+                bucket=BUCKET_LIVE if bucket == BUCKET_LIVE else None,
+            )
             open_orders = [
-                o
-                for o in await self._repo.list_open_orders()
-                if o["market"] == MARKET_OVERSEAS_FUTUREOPTION
+                o for o in await self._repo.list_open_orders() if o["market"] in markets
             ]
         canceled = 0
         for o in open_orders:
