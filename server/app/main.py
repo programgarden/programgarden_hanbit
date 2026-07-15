@@ -6,6 +6,7 @@ M0 에서는 세션/엔진을 기동하지 않고 "READ_ONLY, LIVE disabled" 만
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -25,12 +26,16 @@ from app.api import (
 )
 from app.config import get_settings
 from app.core.event_bus import EventBus
+from app.core.mode_matrix import MARKET_OVERSEAS_FUTUREOPTION
 from app.core.sessions import SessionManager
 from app.logging_setup import get_logger, setup_logging
 from app.orders.boot import boot_engine
 from app.repositories.db import init_db
 from app.repositories.orders_repo import OrdersRepo
+from app.services.market_service import MarketService
 from app.services.order_service import OrderService
+from app.strategies.engine import StrategyEngine
+from app.strategies.threshold import ThresholdStrategy
 
 API_V1_PREFIX = "/api/v1"
 
@@ -88,16 +93,54 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:  # noqa: BLE001 — 구독 실패가 기동을 막지 않는다(권위는 reconcile)
         logger.exception("realtime fills start failed")
 
+    # M5 자동매매 전략 엔진 — 마스터 토글 off 기본. MarketService 를 시세 소스로 주입.
+    # 안전: 발주는 전부 order_service.place(게이트) 경유 — LIVE 는 allow_live 로 잠김(실주문 0).
+    strategy_engine = StrategyEngine(
+        order_service, repo, MarketService(sessions).get_quote,
+        enabled=settings.hanbit_strategies_enabled,
+    )
+    try:  # 예제 전략 등록(FUT 화이트리스트) — 켜야만 발주하므로 등록 자체는 무해.
+        wl = await repo.list_whitelist(MARKET_OVERSEAS_FUTUREOPTION)
+        syms = [r["symbol"] for r in wl][:5]
+        if syms:
+            strategy_engine.add_strategy(
+                ThresholdStrategy(
+                    "예제-임계값(FUT paper)", MARKET_OVERSEAS_FUTUREOPTION, syms,
+                    qty=1, buy_drop_pct=3.0, sell_profit_pct=5.0,
+                )
+            )
+    except Exception:  # noqa: BLE001 — 시드 실패가 기동을 막지 않는다.
+        logger.exception("strategy seed failed")
+    app.state.strategy_engine = strategy_engine
+    app.state.strategy_stop = asyncio.Event()
+    app.state.strategy_task = None
+    if settings.hanbit_strategies_enabled and settings.hanbit_strategy_interval_s > 0:
+        app.state.strategy_task = asyncio.create_task(
+            strategy_engine.run_loop(
+                settings.hanbit_strategy_interval_s, stop=app.state.strategy_stop
+            )
+        )
+        logger.info(
+            "strategy auto-loop started (interval=%ss)", settings.hanbit_strategy_interval_s
+        )
+
     logger.info(
-        "startup complete — mode=READ_ONLY engine_state=%s allow_live=%s db=%s sessions=%s "
-        "realtime_fills=%s",
+        "startup complete — mode=READ_ONLY engine_state=%s allow_live=%s strategies=%s db=%s "
+        "sessions=%s realtime_fills=%s",
         order_service.engine.state,
         settings.hanbit_allow_live,
+        settings.hanbit_strategies_enabled,
         settings.hanbit_db_path,
         sessions.status(),
         settings.realtime_fills_enabled,
     )
     yield
+    if app.state.strategy_task is not None:  # 자동 루프 정지(조기 종료 이벤트 → 태스크 종료)
+        app.state.strategy_stop.set()
+        try:
+            await asyncio.wait_for(app.state.strategy_task, timeout=5)
+        except (TimeoutError, asyncio.CancelledError):
+            app.state.strategy_task.cancel()
     await realtime_fills.stop()
     await sessions.close()
     logger.info("shutdown complete")

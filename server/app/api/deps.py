@@ -37,6 +37,11 @@ def get_order_service(request: Request) -> OrderService:
     return request.app.state.order_service
 
 
+def get_strategy_engine(request: Request):
+    """app.state.strategy_engine(StrategyEngine) 반환 — M5 자동매매 엔진."""
+    return request.app.state.strategy_engine
+
+
 def get_whitelist_service(request: Request) -> WhitelistService:
     """요청별 WhitelistService 생성(repo/세션 공유)."""
     return WhitelistService(get_repo(request), get_sessions(request))
