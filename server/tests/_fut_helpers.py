@@ -65,11 +65,16 @@ async def make_repo() -> OrdersRepo:
 
 
 def fake_settings(
-    engine: str = "PAPER_TRADING", *, realtime_fills: bool = False
+    engine: str = "PAPER_TRADING", *, realtime_fills: bool = False, allow_live: bool = False
 ) -> SimpleNamespace:
     return SimpleNamespace(
         hanbit_engine_state=engine,
         engine_trading_enabled=(engine == "PAPER_TRADING"),
+        # M4a §2 LIVE 마스터 토글 + 소액 캡/가드(registry allow_live 게이트가 읽는다).
+        hanbit_allow_live=allow_live,
+        hanbit_live_per_order_cap_krw=100_000,
+        hanbit_live_per_order_cap_usd=50.0,
+        hanbit_live_first_order_guard=True,
         # M3a FX (FxRateProvider.from_settings)
         hanbit_fx_usd_krw=1400.0,
         hanbit_fx_hkd_krw=180.0,
@@ -84,6 +89,9 @@ def fake_settings(
 
 
 def patch_adapter(monkeypatch, fake: FakeOrderAdapter) -> None:
+    # M4a §3.4/§17 L3-1: make_order_adapter 시그니처에 keyword-only `allow_live` 가 추가됐다.
+    # 대체 람다가 **kwargs 로 이를 수용하지 않으면 기존 테스트가 TypeError 로 깨진다.
     monkeypatch.setattr(
-        "app.services.order_service.make_order_adapter", lambda market, session: fake
+        "app.services.order_service.make_order_adapter",
+        lambda market, session, **kwargs: fake,
     )

@@ -79,6 +79,9 @@ class OverseasFutureOrderAdapter:
     """해외선물(paper, HKEX) 주문/조회 어댑터."""
 
     market = MARKET_OVERSEAS_FUTUREOPTION
+    tr_new = TR_NEW
+    tr_amend = TR_AMEND
+    tr_cancel = TR_CANCEL
 
     def __init__(self, session: SessionManager) -> None:
         self._session = session

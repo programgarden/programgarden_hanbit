@@ -37,6 +37,21 @@ class Settings(BaseSettings):
     # 안전 토글 (M4까지 false 유지)
     hanbit_allow_live: bool = Field(default=False, alias="HANBIT_ALLOW_LIVE")
 
+    # M4 LIVE 버킷(KR/OVS) 소액 안전 토글 (§2). allow_live=false 인 한 코드만 적재되고
+    # 실주문 경로는 registry/gate/boot 3중으로 닫혀 있어 아래 값은 사용되지 않는다.
+    # ⚠ per-order 캡 값은 [R] §11 로 사용자 확정 대기 중 — 아래 기본값은 mode_matrix
+    #   small_amount_cap 현재값(KR 100,000 KRW / OVS 50 USD)을 단일 출처로 반영한 잠정치.
+    hanbit_live_per_order_cap_krw: int = Field(
+        default=100_000, alias="HANBIT_LIVE_PER_ORDER_CAP_KRW"
+    )
+    hanbit_live_per_order_cap_usd: float = Field(
+        default=50.0, alias="HANBIT_LIVE_PER_ORDER_CAP_USD"
+    )
+    # 첫주문 완충 가드(§10.2) — LIVE 버킷 최소수량·단일종목·취소우선. 기본 on.
+    hanbit_live_first_order_guard: bool = Field(
+        default=True, alias="HANBIT_LIVE_FIRST_ORDER_GUARD"
+    )
+
     # 주문 엔진 상태 (M2). 기본 READ_ONLY = 주문 차단. paper FUT 주문 경로를 열려면
     # PAPER_TRADING 으로 명시 전환. LIVE 시장(KR/OVS) 주문은 M4까지 이와 무관하게 닫힘.
     hanbit_engine_state: str = Field(default="READ_ONLY", alias="HANBIT_ENGINE_STATE")

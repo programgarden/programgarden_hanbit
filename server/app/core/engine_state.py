@@ -42,13 +42,26 @@ class EngineState:
 
     @classmethod
     def from_config(cls, settings) -> EngineState:
-        """config 의도에서 초기 런타임 상태 도출.
+        """config 의도에서 초기 런타임 상태 도출(paper 버킷).
 
         PAPER_TRADING(거래 의도) → ACTIVE(빈 책 부트 결과와 동일), READ_ONLY → READ_ONLY.
         실제 운영 부팅은 `boot_engine` 이 이 위에서 READ_ONLY→RECONCILING→ACTIVE 를 재구동한다.
         """
         enabled = bool(getattr(settings, "engine_trading_enabled", False))
         return cls(cls.ACTIVE if enabled else cls.READ_ONLY)
+
+    # per-bucket EngineState(M4a §3.2): paper 버킷 = 기존 config 의도, live 버킷 = allow_live.
+    from_paper_config = from_config  # 의미 명시용 별칭(단일 글로벌→버킷맵 리팩터).
+
+    @classmethod
+    def live_initial(cls, settings) -> EngineState:  # noqa: ARG003 - settings 향후 사용
+        """LIVE 버킷 초기 상태 — 항상 READ_ONLY 로 시작.
+
+        allow_live 여부와 무관하게 초기값은 READ_ONLY 다. LIVE 버킷 ACTIVE 전이는 오직
+        `boot_engine` 이 `allow_live=true AND live reconcile 성공` 일 때만 수행한다(§3.2).
+        allow_live=false → boot 가 reconcile 자체를 skip 하고 READ_ONLY 고정.
+        """
+        return cls(cls.READ_ONLY)
 
     def __repr__(self) -> str:  # pragma: no cover - 디버그 표현
         return f"EngineState({self._state})"

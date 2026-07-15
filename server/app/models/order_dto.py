@@ -164,3 +164,7 @@ class CancelRequest(BaseModel):
     org_ord_no: str
     symbol: str
     exchange: str = Field(default="HKEX")
+    # 취소 수량 — **Optional, 기본 None**(§4.3 / §17 L4-4). 어댑터별로 None=전량(FUT),
+    # 필수채움(KR/OVS). 필수(gt=0)로 두면 기존 FUT cancel 호출부가 ValidationError 로 깨진다.
+    # order_service.cancel 이 원주문의 remaining_qty(미체결 잔량)를 채워 전달(over-cancel 회피).
+    qty: int | None = Field(default=None, ge=1, description="취소 수량(None=전량, KR/OVS 필수)")

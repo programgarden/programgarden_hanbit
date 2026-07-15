@@ -1,10 +1,13 @@
-"""주문 TR 정적 불변식 (M2 진화 → M3b §12 진화).
+"""주문 TR 정적 불변식 (M2 → M3b §12 → **M4b/M4c 진화**).
 
-- **국내/해외주식 주문 TR(CSPAT*/COSAT*/COSMT*)은 app/ 어디에도 없어야 한다** — 실거래 주문
-  경로는 M4까지 코드상 부재(정규식 스캔으로 드리프트 방지: 손수 유지하는 목록 대신 prefix 패턴).
-- **해외선물 주문 발주 TR(CIDBT*)은 FUT 주문 어댑터 파일 한 곳에만 등장** — 발주 식별자 스코프.
-  (CIDBQ* 계좌 조회 TR 은 reconcile 읽기 경로라 주석/문서 참조 허용 — 발주 경로 아님.)
-- 신규/정정/취소 TR 이 어댑터에 실제 배선돼 있어야 한다(부재 회귀 방지).
+- **주문 발주 TR 은 각 시장의 전용 주문 어댑터 파일 한 곳에만 등장한다(스코프 봉인)** — INV-1 이
+  약화가 아니라 진화한 것(M4 §12). "app/ 어디에도 없음"(M3b) → "전용 어댑터에만 있음"(M4):
+    · CIDBT*(해외선물)  → overseas_future_order.py
+    · CSPAT*(국내주식)  → korea_stock_order.py
+    · COSAT*/COSMT*(해외주식) → overseas_stock_order.py
+  그 밖의 app/ 파일에 발주 TR 리터럴이 새면(주석 포함) INV-1 누수 → 실패(정규식 드리프트 가드).
+  (CIDBQ*/CSPAQ*/COSAQ*/COSOQ* 계좌 조회 TR 은 reconcile 읽기 경로라 스코프 대상 아님.)
+- 신규/정정/취소 TR 이 각 어댑터에 실제 배선돼 있어야 한다(부재 회귀 방지).
 
 M3b §12 진화 (INV-1 누수 차단을 컴파일 단계에서 박제):
 - **account_tracker 계열 계좌-조회 TR(CIDBQ03000/01800/o3121)은 app/portfolio/ 밖에 등장 금지** —
@@ -21,12 +24,14 @@ from pathlib import Path
 
 _APP_DIR = Path(__file__).resolve().parents[1] / "app"
 _FUT_ADAPTER = (_APP_DIR / "adapters" / "overseas_future_order.py").resolve()
+_KR_ADAPTER = (_APP_DIR / "adapters" / "korea_stock_order.py").resolve()
+_OVS_ADAPTER = (_APP_DIR / "adapters" / "overseas_stock_order.py").resolve()
 _PORTFOLIO_DIR = (_APP_DIR / "portfolio").resolve()
 
-# 실거래(KR/OVS) 주문 TR — 어디에도 금지
-_FORBIDDEN_RE = re.compile(r"\b(?:CSPAT|COSAT|COSMT)\d{3,}\b")
-# 해외선물 주문 발주 TR — FUT 어댑터에만 허용
+# 시장별 주문 발주 TR → 각각 전용 어댑터 파일에만 허용(스코프 봉인). (prefix, 허용파일, 정규식)
 _FUT_ORDER_RE = re.compile(r"\bCIDBT\d{3,}\b")
+_KR_ORDER_RE = re.compile(r"\bCSPAT\d{3,}\b")
+_OVS_ORDER_RE = re.compile(r"\b(?:COSAT|COSMT)\d{3,}\b")
 # account_tracker 계열 계좌-조회/마스터 TR — app/portfolio/ 밖 금지(forward guard, §12).
 # 트레일링 \b 없음: `CIDBQ03000InBlock1`(식별자+단어문자) 형태까지 잡도록 prefix 매치.
 _ACCOUNT_TR_RE = re.compile(r"\b(?:CIDBQ03000|CIDBQ01800|o3121|O3121)")
@@ -39,7 +44,12 @@ _LIVE_STOCK_ADAPTERS = (
 _ORDER_FACADE_RE = re.compile(r"\.order\(")
 _ORDER_METHOD_RE = re.compile(r"\bdef\s+(?:place|amend|cancel)_order\b")
 
-_EXPECTED_IN_ADAPTER = ("CIDBT00100", "CIDBT00900", "CIDBT01000")
+# 각 시장 발주 TR → 전용 어댑터 파일에만 허용(스코프 봉인) + 어댑터 내 필수 존재(배선 증명).
+_ORDER_TR_SCOPE = (
+    ("FUT", _FUT_ORDER_RE, _FUT_ADAPTER, ("CIDBT00100", "CIDBT00900", "CIDBT01000")),
+    ("KR", _KR_ORDER_RE, _KR_ADAPTER, ("CSPAT00601", "CSPAT00701", "CSPAT00801")),
+    ("OVS", _OVS_ORDER_RE, _OVS_ADAPTER, ("COSAT00301", "COSAT00311")),
+)
 
 
 def _py_files():
@@ -50,28 +60,29 @@ def _is_under(path: Path, parent: Path) -> bool:
     return parent == path or parent in path.parents
 
 
-def test_no_live_order_tr_in_app_source():
+def test_order_tr_scoped_to_dedicated_adapter():
+    """발주 TR(CIDBT*/CSPAT*/COSAT*/COSMT*)은 각 전용 어댑터 파일 밖에 등장하면 INV-1 누수(§12).
+
+    "app/ 어디에도 없음"(M3b)에서 "전용 어댑터에만 있음"(M4)으로 **더 정밀하게** 조인 것 —
+    느슨해진 게 아니다. 주석·문서 문자열까지 포함해 다른 파일 등장 시 실패한다.
+    """
     offenders: list[str] = []
-    for py in _py_files():
-        for m in _FORBIDDEN_RE.findall(py.read_text(encoding="utf-8")):
-            offenders.append(f"{py.relative_to(_APP_DIR)}: {m}")
-    assert not offenders, f"live (KR/OVS) order TR identifiers found in app/: {offenders}"
+    for label, regex, allowed, _expected in _ORDER_TR_SCOPE:
+        for py in _py_files():
+            if py.resolve() == allowed:
+                continue
+            for m in regex.findall(py.read_text(encoding="utf-8")):
+                offenders.append(f"[{label}] {py.relative_to(_APP_DIR)}: {m}")
+    assert not offenders, f"order TR leaked outside its dedicated adapter: {offenders}"
 
 
-def test_fut_order_tr_scoped_to_adapter():
-    offenders: list[str] = []
-    for py in _py_files():
-        if py.resolve() == _FUT_ADAPTER:
-            continue
-        for m in _FUT_ORDER_RE.findall(py.read_text(encoding="utf-8")):
-            offenders.append(f"{py.relative_to(_APP_DIR)}: {m}")
-    assert not offenders, f"CIDBT* order TR leaked outside FUT adapter: {offenders}"
-
-
-def test_fut_order_tr_present_in_adapter():
-    text = _FUT_ADAPTER.read_text(encoding="utf-8")
-    missing = [tr for tr in _EXPECTED_IN_ADAPTER if tr not in text]
-    assert not missing, f"expected FUT order TRs missing from adapter: {missing}"
+def test_order_tr_present_in_each_adapter():
+    """각 시장 신규/정정/취소 TR 이 전용 어댑터에 실제 배선돼 있어야 한다(부재 회귀 방지)."""
+    missing: list[str] = []
+    for label, _regex, allowed, expected in _ORDER_TR_SCOPE:
+        text = allowed.read_text(encoding="utf-8")
+        missing.extend(f"[{label}] {tr}" for tr in expected if tr not in text)
+    assert not missing, f"expected order TRs missing from adapter: {missing}"
 
 
 # ── M3b §12 진화 ─────────────────────────────────────────────────────────────

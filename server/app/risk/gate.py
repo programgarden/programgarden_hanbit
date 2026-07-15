@@ -27,7 +27,11 @@ from pydantic import BaseModel
 
 from app.core.engine_state import EngineState
 from app.core.mode_matrix import (
+    BUCKET_LIVE,
+    MARKET_KOREA_STOCK,
     MARKET_OVERSEAS_FUTUREOPTION,
+    MARKET_OVERSEAS_STOCK,
+    TRADING_MODE_LIVE,
     TRADING_MODE_PAPER,
     bucket_of,
     markets_of,
@@ -75,9 +79,24 @@ class RiskContext:
 class RiskGate:
     """주문 단일 진입 사전검증 게이트."""
 
-    def __init__(self, repo: OrdersRepo, *, fx=None) -> None:
+    def __init__(self, repo: OrdersRepo, *, fx=None, settings=None) -> None:
         self._repo = repo
         self._fx = fx  # FxRateProvider | None — None 이면 FX 캡·노출 단계 skip(M2 호환)
+        # settings 주입(§6/§17 L1-4): LIVE 마스터 토글 allow_live + 소액 per-order 캡의 단일출처.
+        # 미주입(M2 단위테스트)이면 allow_live=False → LIVE 시장 하드거부(기존 동작 보존).
+        self._settings = settings
+        self._allow_live = bool(getattr(settings, "hanbit_allow_live", False))
+
+    def _live_cap_native(self, market: str) -> float | None:
+        """LIVE per-order 소액 캡(주문통화 단위, config 단일출처 §2/§11). 미설정 시 None(skip)."""
+        s = self._settings
+        if s is None:
+            return None
+        if market == MARKET_KOREA_STOCK:
+            return float(getattr(s, "hanbit_live_per_order_cap_krw", 0) or 0)
+        if market == MARKET_OVERSEAS_STOCK:
+            return float(getattr(s, "hanbit_live_per_order_cap_usd", 0) or 0)
+        return None
 
     async def pre_check(
         self,
@@ -127,20 +146,34 @@ class RiskGate:
                     intent, RiskResult.REJECT, ["QUARANTINED"], "critical", reclassified
                 )
 
-        # 2. 모드/HKEX 안전가드 (하드, in-gate 이중방어) — ★EXIT 비우회★.
-        if intent.market != MARKET_OVERSEAS_FUTUREOPTION:
+        # 2. 모드/시장 안전가드 (하드, in-gate 이중방어) — ★EXIT 비우회★. 시장별 분기(§6).
+        if intent.market == MARKET_OVERSEAS_FUTUREOPTION:
+            # FUT(paper): HKEX 화이트리스트 강제(M2 그대로).
+            if trading_mode_of(intent.market) != TRADING_MODE_PAPER:
+                return await self._finalize(
+                    intent, RiskResult.REJECT, ["MODE_MISMATCH"], "critical", reclassified
+                )
+            if intent.exchange != "HKEX" or not await self._repo.is_whitelisted(
+                intent.market, intent.symbol
+            ):
+                return await self._finalize(
+                    intent, RiskResult.REJECT, ["FUT_NOT_HKEX"], "critical", reclassified
+                )
+        elif bucket == BUCKET_LIVE:
+            # KR/OVS(LIVE): allow_live 마스터 토글이 꺼져 있으면 하드 거부(registry·부트와 3중 방어,
+            # §17 L1-4 — 게이트 단독으로도 누수 없음). 켜져 있으면 모드=live 정합만 확인.
+            if not self._allow_live:
+                return await self._finalize(
+                    intent, RiskResult.REJECT, ["LIVE_DISABLED"], "critical", reclassified
+                )
+            if trading_mode_of(intent.market) != TRADING_MODE_LIVE:
+                return await self._finalize(
+                    intent, RiskResult.REJECT, ["MODE_MISMATCH"], "critical", reclassified
+                )
+        else:
+            # 미지 시장 → 거부.
             return await self._finalize(
                 intent, RiskResult.REJECT, ["LIVE_DISABLED"], "critical", reclassified
-            )
-        if trading_mode_of(intent.market) != TRADING_MODE_PAPER:
-            return await self._finalize(
-                intent, RiskResult.REJECT, ["MODE_MISMATCH"], "critical", reclassified
-            )
-        if intent.exchange != "HKEX" or not await self._repo.is_whitelisted(
-            intent.market, intent.symbol
-        ):
-            return await self._finalize(
-                intent, RiskResult.REJECT, ["FUT_NOT_HKEX"], "critical", reclassified
             )
 
         # 유효 EXIT(reduce-only)는 위험감축 — 캡/노출/한도 skip(시장가드는 위에서 이미 통과).
@@ -160,9 +193,18 @@ class RiskGate:
         # 4. 명목 캡 — 통화중립 bucket_notional_cap + FX ceil per_order_cap_krw(§5.2)
         notional = notional_in_ccy(intent.qty, intent.price, ctx.multiplier)
         notional_krw = None
+        # 4'. LIVE notional-필수 가드(§6 step4'/§17 L1-1): 시장가·price=None·0 은 명목 산정불가라
+        #     소액캡·INV-7·orderable 4단계가 전부 우회된다(무한도 발사) → LIVE 는 하드 REJECT.
+        if bucket == BUCKET_LIVE and (notional is None or notional <= 0):
+            rejects.append("NO_NOTIONAL_FOR_LIVE")
         if notional is not None:
             if notional > limits.bucket_notional_cap:
                 rejects.append("BUCKET_NOTIONAL_CAP")
+            # LIVE 소액 per-order 캡(주문통화, config 단일출처 §6 step4). KR=KRW / OVS=USD.
+            if bucket == BUCKET_LIVE:
+                live_cap = self._live_cap_native(intent.market)
+                if live_cap is not None and notional > live_cap:
+                    rejects.append("PER_ORDER_CAP_LIVE")
             if self._fx is not None:
                 if not self._fx.supports(ccy):
                     # 미지원 통화 → 1:1 환산은 캡 과소산정(누수) → 하드 거부(리뷰 #16).
@@ -246,6 +288,7 @@ class RiskGate:
         fx 미주입 시 캡/노출 단계는 skip(M2 호환).
         """
         ctx = ctx or RiskContext()
+        bucket = bucket_of(market)
         limits = await RiskLimits.load(self._repo, market)
         ccy = currency or "USD"
         rejects: list[str] = []
@@ -255,9 +298,16 @@ class RiskGate:
             rejects.append("MAX_CONTRACTS")
 
         notional = notional_in_ccy(new_qty, new_price, ctx.multiplier)
+        # LIVE notional-필수 가드(정정도 명목 산정불가면 하드 REJECT, §6 step4').
+        if bucket == BUCKET_LIVE and (notional is None or notional <= 0):
+            rejects.append("NO_NOTIONAL_FOR_LIVE")
         if notional is not None:
             if notional > limits.bucket_notional_cap:
                 rejects.append("BUCKET_NOTIONAL_CAP")
+            if bucket == BUCKET_LIVE:
+                live_cap = self._live_cap_native(market)
+                if live_cap is not None and notional > live_cap:
+                    rejects.append("PER_ORDER_CAP_LIVE")
             if self._fx is not None:
                 if not self._fx.supports(ccy):
                     rejects.append("FX_UNKNOWN_CCY")

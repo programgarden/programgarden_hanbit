@@ -49,16 +49,23 @@ async def system_health(request: Request) -> dict[str, Any]:
         }
     )
     order_service = getattr(request.app.state, "order_service", None)
+    # engine_state = paper 버킷 값(하위호환, §17 L3-9). 버킷별은 engine_states 맵으로 신규 노출.
     engine_state = (
         order_service.engine.state
         if order_service is not None
         else settings.hanbit_engine_state
+    )
+    engine_states = (
+        {b: order_service.engine_for(b).state for b in (BUCKET_PAPER, BUCKET_LIVE)}
+        if order_service is not None
+        else {BUCKET_PAPER: settings.hanbit_engine_state, BUCKET_LIVE: "READ_ONLY"}
     )
     return success(
         {
             "status": "ok",
             "mode": "READ_ONLY",
             "engine_state": engine_state,
+            "engine_states": engine_states,
             "allow_live": settings.hanbit_allow_live,
             "realtime_fills": settings.realtime_fills_enabled,
             "sessions": sessions_status,
