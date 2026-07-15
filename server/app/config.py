@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     # 설계: .claude/plans/2026-06-20-통합계획서.md M3 §8
     hanbit_tr_min_interval_ms: int = Field(default=250, alias="HANBIT_TR_MIN_INTERVAL_MS")
 
+    # 자동매매 전략 엔진 마스터 토글 (M5). 기본 off — 켜야만 전략이 발주한다(자동경로는 사람
+    # 확인이 없어 게이트가 유일 방어선). LIVE 발주는 여전히 allow_live 로 별도 잠금(실주문 0).
+    hanbit_strategies_enabled: bool = Field(default=False, alias="HANBIT_STRATEGIES_ENABLED")
+    # 전략 자동 실행 주기(초). 백그라운드 루프가 이 간격으로 run_once(). 0 이면 자동 루프 미기동.
+    hanbit_strategy_interval_s: int = Field(default=0, alias="HANBIT_STRATEGY_INTERVAL_S")
+
     # 실시간 체결(TC2/TC3) 스캐폴드 (M3b §10). 기본 off — TC 라이브 값/OvrsFutsOrdNo 매칭
     # 미검증(§13-5)이라 reconcile(CIDBQ02400)이 체결 권위. on 으로 켜도 런타임 EngineState 가
     # READ_ONLY/RECONCILING 이면 writer 는 강제 off(거래 안 도는데 상태 변이 금지, 검증 Lens2-M3).
