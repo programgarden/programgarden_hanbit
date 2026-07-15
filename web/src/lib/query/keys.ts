@@ -30,4 +30,6 @@ export const qk = {
   quote: (market: string, symbol: string) => ["quote", market, symbol] as const,
   ohlcv: (market: string, symbol: string, period: string, count: number) =>
     ["ohlcv", market, symbol, period, count] as const,
+
+  strategies: ["strategies"] as const,
 };

@@ -174,3 +174,27 @@ export const useKillSwitch = () => {
     },
   });
 };
+
+// ── Strategies (M5) ────────────────────────────────────────────────────────────
+export const useStrategies = () =>
+  useQuery({ queryKey: qk.strategies, queryFn: api.getStrategies, refetchInterval: POLL });
+
+export const useToggleStrategies = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) => api.toggleStrategies(enabled),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.strategies }),
+  });
+};
+
+export const useRunStrategies = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.runStrategies(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.strategies });
+      qc.invalidateQueries({ queryKey: qk.orders });
+      qc.invalidateQueries({ queryKey: qk.portfolio });
+    },
+  });
+};

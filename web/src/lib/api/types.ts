@@ -390,3 +390,36 @@ export interface QuarantineResponse {
   orders: OrderRow[];
   count: number;
 }
+
+// ── Strategies (M5 — 자동매매 전략 엔진) ──────────────────────────────────────
+export interface StrategyItem {
+  name: string;
+  market: Market;
+  symbols: string[];
+  enabled: boolean;
+}
+
+export interface StrategiesResponse {
+  enabled: boolean; // 엔진 마스터 토글(켜야만 발주)
+  strategies: StrategyItem[];
+}
+
+export interface StrategyToggleResponse {
+  enabled: boolean;
+}
+
+export interface StrategyRunResult {
+  strategy: string;
+  symbol: string;
+  side: string;
+  intent: string;
+  qty: number;
+  reason: string;
+  ok: boolean; // 게이트 통과·발주 성공 여부
+  decision?: { result?: string; reasons?: string[] } | null; // 거부 시 사유
+}
+
+export interface StrategyRunResponse {
+  enabled: boolean;
+  fired: StrategyRunResult[];
+}

@@ -33,6 +33,9 @@ import type {
   QuoteResponse,
   RiskEventsResponse,
   RiskLimitsResponse,
+  StrategiesResponse,
+  StrategyRunResponse,
+  StrategyToggleResponse,
   WhitelistResponse,
 } from "./types";
 
@@ -88,3 +91,9 @@ export const getRiskEvents = (limit = 50, offset = 0) =>
 export const getHaltState = () => apiGet<HaltStateResponse>("/risk/halt_state");
 export const killSwitch = (body: KillSwitchBody) =>
   apiPost<KillSwitchResponse>("/risk/killswitch", body);
+
+// ── Strategies (M5) ───────────────────────────────────────────────────────────
+export const getStrategies = () => apiGet<StrategiesResponse>("/strategy");
+export const toggleStrategies = (enabled: boolean) =>
+  apiPost<StrategyToggleResponse>("/strategy/toggle", { enabled });
+export const runStrategies = () => apiPost<StrategyRunResponse>("/strategy/run", {});
